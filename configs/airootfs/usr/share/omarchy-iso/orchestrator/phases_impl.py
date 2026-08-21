@@ -120,9 +120,24 @@ def _omarchy_nvim_package() -> str:
 
 # The root image: a `btrfs send --compressed-data` stream of the invariant
 # target system (build-root-image.sh), unpacked onto the target in place of
-# pacstrapping it. The subvolume name is what build-root-image.sh sends.
-ROOT_IMAGE_STREAM = Path("/var/cache/omarchy/rootfs/omarchy-root.btrfs")
+# pacstrapping it. build-iso.sh ships it as a plain file on the ISO, read
+# straight off the boot medium; the squashfs location is where builds before
+# that move put it, kept so an older live root and a newer orchestrator (or
+# the reverse) still find the stream. The subvolume name is what
+# build-root-image.sh sends.
+ROOT_IMAGE_STREAM_CANDIDATES = (
+    Path("/run/archiso/bootmnt/arch/x86_64/omarchy-root.btrfs"),
+    Path("/var/cache/omarchy/rootfs/omarchy-root.btrfs"),
+)
 ROOT_IMAGE_SUBVOLUME = "omarchy-root"
+
+
+def _root_image_stream() -> Path:
+    for candidate in ROOT_IMAGE_STREAM_CANDIDATES:
+        if candidate.is_file():
+            return candidate
+    searched = ", ".join(str(c) for c in ROOT_IMAGE_STREAM_CANDIDATES)
+    raise RuntimeError(f"root image stream missing; looked at {searched}")
 
 # Packages the image must carry for the rest of the install to work: Limine
 # setup reads the settings package's limine config, useradd copies the skel the
@@ -344,8 +359,7 @@ def _remount_option_string(options: str) -> str:
 
 def _install_root_image(ctx: InstallContext) -> None:
     target = ctx.target
-    if not ROOT_IMAGE_STREAM.is_file():
-        raise RuntimeError(f"root image stream missing: {ROOT_IMAGE_STREAM}")
+    stream = _root_image_stream()
 
     mounts = _findmnt_mounts(target)
     if not mounts or Path(mounts[0]["target"]) != target:
@@ -368,8 +382,8 @@ def _install_root_image(ctx: InstallContext) -> None:
         if received.exists():
             subprocess.run(["btrfs", "subvolume", "delete", str(received)], check=True, capture_output=True)
 
-        info(f"› unpacking root image ({ROOT_IMAGE_STREAM.stat().st_size >> 20} MiB stream)")
-        _receive_root_image(ctx, top)
+        info(f"› unpacking root image ({stream.stat().st_size >> 20} MiB stream from {stream})")
+        _receive_root_image(ctx, top, stream)
 
         staged = top / "@.image"
         if staged.exists():
@@ -422,10 +436,10 @@ def _umount_tree(root: Path, attempts: int = 20) -> None:
         time.sleep(0.25)
 
 
-def _receive_root_image(ctx: InstallContext, top: Path) -> None:
+def _receive_root_image(ctx: InstallContext, top: Path, stream_path: Path) -> None:
     """Pipe the stream into btrfs receive, publishing progress for the
     dashboard as a fraction of stream bytes consumed."""
-    total = ROOT_IMAGE_STREAM.stat().st_size
+    total = stream_path.stat().st_size
     errors = ctx.state_dir / "btrfs-receive.err"
     with errors.open("w") as err:
         proc = subprocess.Popen(
@@ -437,7 +451,7 @@ def _receive_root_image(ctx: InstallContext, top: Path) -> None:
     sent = 0
     last_report = 0.0
     try:
-        with ROOT_IMAGE_STREAM.open("rb") as stream:
+        with stream_path.open("rb") as stream:
             while chunk := stream.read(8 << 20):
                 proc.stdin.write(chunk)
                 sent += len(chunk)

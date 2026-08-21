@@ -51,9 +51,7 @@ fi
 # Build locations
 build_cache_dir=/var/cache
 offline_mirror_dir="$build_cache_dir/airootfs/var/cache/omarchy/mirror/offline"
-root_image_dir="$build_cache_dir/airootfs/var/cache/omarchy/rootfs"
-root_image_stream="$root_image_dir/omarchy-root.btrfs"
-mkdir -p "$build_cache_dir" "$offline_mirror_dir" "$root_image_dir"
+mkdir -p "$build_cache_dir" "$offline_mirror_dir"
 
 # Seed from the official Arch releng profile.
 cp -r /archiso/configs/releng/* "$build_cache_dir/"
@@ -284,9 +282,30 @@ NoExtract = usr/share/man/*\\
 NoExtract = usr/share/locale/* !usr/share/locale/en* !usr/share/locale/locale.alias" \
   "$build_cache_dir/pacman-offline.conf" >"$image_pacman_conf"
 
+# The stream ships as a plain file in the ISO9660 tree next to airootfs.sfs,
+# not inside the squashfs: mkarchiso packs its work/iso directory as is, so a
+# file seeded there ends up on the ISO with the boot records intact. Read
+# straight off the boot medium it skips squashfs's per-block copy (~10% off
+# the unpack), mkarchiso no longer copies 3GB into the squashfs, and the
+# image can be pulled out of the ISO with any ISO9660 tool. The live system
+# finds it at /run/archiso/bootmnt/<install_dir>/<arch>/.
+#
+# profiledef.sh cannot be sourced standalone (its file_permissions needs
+# mkarchiso's declare -A first); read the two values it sets instead.
+iso_subdir="$(sed -n 's/^install_dir="\(.*\)"$/\1/p' "$build_cache_dir/profiledef.sh")/$(sed -n 's/^arch="\(.*\)"$/\1/p' "$build_cache_dir/profiledef.sh")"
+[[ $iso_subdir == */x86_64 ]] || { echo "ERROR: could not read install_dir/arch from profiledef.sh: '$iso_subdir'" >&2; exit 1; }
+root_image_dir="$build_cache_dir/work/iso/$iso_subdir"
+root_image_stream="$root_image_dir/omarchy-root.btrfs"
+mkdir -p "$root_image_dir"
+# Builds before the move left the stream in the persistent build cache, where
+# it would ship inside the squashfs alongside the new one.
+rm -f "$build_cache_dir/airootfs/var/cache/omarchy/rootfs/omarchy-root.btrfs"
+
 image_localdb=/tmp/omarchy-root-image-localdb
+echo "[timing] root image start $(date +%s)"
 OMARCHY_IMAGE_LOCALDB_COPY="$image_localdb" \
   bash /builder/build-root-image.sh "$image_pacman_conf" "$root_image_stream" "${image_packages[@]}"
+echo "[timing] root image end $(date +%s)"
 
 # Resolve the exact filenames chosen by the same synced package databases used
 # for the download. Pruning by this transaction (rather than merely keeping the
@@ -425,7 +444,9 @@ fi
 cp "$build_cache_dir/pacman-offline.conf" "$build_cache_dir/airootfs/etc/pacman.conf"
 
 # Build the ISO.
+echo "[timing] mkarchiso start $(date +%s)"
 mkarchiso -v -w "$build_cache_dir/work/" -o /out/ "$build_cache_dir/"
+echo "[timing] mkarchiso end $(date +%s)"
 
 # Match host UID/GID on output.
 if [[ -n $HOST_UID && -n $HOST_GID ]]; then

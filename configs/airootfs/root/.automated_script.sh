@@ -70,8 +70,11 @@ fi
 # Set OMARCHY_NO_PREFETCH=1 to A/B the same ISO with this disabled.
 warm_offline_mirror() {
   local mirror=/var/cache/omarchy/mirror/offline
-  local image=/var/cache/omarchy/rootfs/omarchy-root.btrfs
-  local budget_kb spent_kb=0 size_kb path
+  local image budget_kb spent_kb=0 size_kb path
+  # Same candidates, same order, as the orchestrator's ROOT_IMAGE_STREAM_CANDIDATES.
+  for image in /run/archiso/bootmnt/arch/x86_64/omarchy-root.btrfs /var/cache/omarchy/rootfs/omarchy-root.btrfs; do
+    [[ -f $image ]] && break
+  done
 
   [[ ${OMARCHY_NO_PREFETCH:-} == 1 ]] && return 0
 
