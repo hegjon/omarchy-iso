@@ -269,8 +269,19 @@ mapfile -t image_packages < <(
 # the mirror itself, extracts the package files in place instead of copying
 # several GiB into a cache first (the same trick the installer's bind mount
 # plays on the target).
+#
+# NoExtract keeps documentation, man pages and non-English translations out
+# of the image: ~400MiB of stream for files a fresh desktop does not need.
+# This is an ISO-size measure only. The installed system runs Omarchy's own
+# pacman.conf, which has no NoExtract, so every later upgrade of a package
+# brings its docs, man pages and translations back; pacman's local db is
+# consistent either way (NoExtract skips are recorded, not lost).
 image_pacman_conf="$build_cache_dir/pacman-root-image.conf"
-sed "/^\[options\]/a CacheDir = /var/cache/omarchy/mirror/offline/" \
+sed "/^\[options\]/a \\
+CacheDir = /var/cache/omarchy/mirror/offline/\\
+NoExtract = usr/share/doc/* usr/share/info/* usr/share/gtk-doc/* usr/share/help/*\\
+NoExtract = usr/share/man/*\\
+NoExtract = usr/share/locale/* !usr/share/locale/en* !usr/share/locale/locale.alias" \
   "$build_cache_dir/pacman-offline.conf" >"$image_pacman_conf"
 
 image_localdb=/tmp/omarchy-root-image-localdb
