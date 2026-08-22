@@ -4,6 +4,9 @@
 # package cache, the Omarchy install intent (omarchy_install.boot/storage) and
 # the pre-mounted (protected) target's fstab/crypttab.
 
+# Build-time files the ISO ships for the installer (package lists, targets).
+OMARCHY_ISO_SHARE=${OMARCHY_ISO_SHARE:-/usr/share/omarchy-iso}
+
 # Package targets are written by builder/build-iso.sh. Stable ISOs use the
 # stable package names, while dev/local-source ISOs install the dev package
 # names explicitly instead of relying on provides=omarchy resolution.
@@ -24,7 +27,7 @@ package_target() {
   case $(iso_ref) in
     dev|local) runtime=omarchy-dev settings=omarchy-settings-dev ;;
   esac
-  if [[ -f /usr/share/omarchy-iso/package-targets ]]; then
+  if [[ -f $OMARCHY_ISO_SHARE/package-targets ]]; then
     while IFS= read -r line; do
       line=${line#"${line%%[![:space:]]*}"}
       [[ -z $line || $line == \#* || $line != *=* ]] && continue
@@ -39,7 +42,7 @@ package_target() {
         OMARCHY_SETTINGS_PACKAGE) settings=$v ;;
         OMARCHY_NVIM_PACKAGE) nvim=$v ;;
       esac
-    done </usr/share/omarchy-iso/package-targets
+    done <"$OMARCHY_ISO_SHARE/package-targets"
   fi
   [[ -n ${OMARCHY_RUNTIME_PACKAGE:-} ]] && runtime=$OMARCHY_RUNTIME_PACKAGE
   [[ -n ${OMARCHY_SETTINGS_PACKAGE:-} ]] && settings=$OMARCHY_SETTINGS_PACKAGE
@@ -340,7 +343,7 @@ unmask_mkinitcpio_pacman_hooks() {
 # Selected Omarchy runtime package + every package in the ISO-bundled base
 # package list that isn't already installed early.
 runtime_package_list() {
-  local base_pkgs_file=/usr/share/omarchy-iso/omarchy-base.packages runtime line
+  local base_pkgs_file="$OMARCHY_ISO_SHARE/omarchy-base.packages" runtime line
   runtime=$(omarchy_runtime_package)
   local already
   already=$(printf '%s\n' "$(early_packages)" "$runtime" "$(omarchy_settings_package)" "$(omarchy_nvim_package)" omarchy omarchy-settings omarchy-nvim)
