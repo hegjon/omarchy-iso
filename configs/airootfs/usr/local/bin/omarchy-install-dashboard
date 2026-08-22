@@ -727,17 +727,18 @@ sanitize_child_output() {
   # failure in a later phase, which makes the unified log contradictory. Keep
   # it out of Omarchy's support log; the library's own log
   # (/var/log/archinstall/install.log) is still uploaded separately by
-  # omarchy-upload-log.
+  # omarchy-upload-log. The lines carry the orchestrator's indentation (its
+  # info() is the one in effect once both are loaded).
   sed -u \
     -e $'s/\x1b\\[[0-9;?]*[A-Za-z]//g' \
-    -e '/^Activating systemd-timesyncd for time synchronization using Arch Linux and ntp.org NTP servers$/d' \
-    -e '/^Enabling service systemd-timesyncd$/d' \
-    -e '/^Setting password for root$/d' \
-    -e '/^Updating \/mnt\/etc\/fstab$/d' \
-    -e '/^Syncing the system\.\.\.$/d' \
-    -e '/^Installation completed without any errors\.$/d' \
-    -e '/^Log files temporarily available at \/var\/log\/archinstall\.$/d' \
-    -e '/^You may reboot when ready\.$/d'
+    -e '/^ *Activating systemd-timesyncd for time synchronization using Arch Linux and ntp.org NTP servers$/d' \
+    -e '/^ *Enabling service systemd-timesyncd$/d' \
+    -e '/^ *Setting password for root$/d' \
+    -e '/^ *Updating \/mnt\/etc\/fstab$/d' \
+    -e '/^ *Syncing the system\.\.\.$/d' \
+    -e '/^ *Installation completed without any errors\.$/d' \
+    -e '/^ *Log files temporarily available at \/var\/log\/archinstall\.$/d' \
+    -e '/^ *You may reboot when ready\.$/d'
 }
 
 launch_child() {

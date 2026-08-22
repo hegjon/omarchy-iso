@@ -66,11 +66,9 @@ rm -rf "$build_cache_dir/airootfs/etc/xdg/reflector"
 cp -r /configs/* "$build_cache_dir/"
 
 # The installer library: archinstall-bash (submodule), the bash port of
-# archinstall that the orchestrator drives one step at a time through
-# archinstall-step (see orchestrator/archinstall_adapter.py).
-mkdir -p "$build_cache_dir/airootfs/usr/share/archinstall-bash" "$build_cache_dir/airootfs/usr/local/bin"
+# archinstall the orchestrator sources (see orchestrator/archinstall.sh).
+mkdir -p "$build_cache_dir/airootfs/usr/share/archinstall-bash"
 cp -r /archinstall-bash/bin /archinstall-bash/lib /archinstall-bash/LICENSE "$build_cache_dir/airootfs/usr/share/archinstall-bash/"
-ln -sf /usr/share/archinstall-bash/bin/archinstall-step "$build_cache_dir/airootfs/usr/local/bin/archinstall-step"
 mkdir -p "$build_cache_dir/airootfs/usr/share/omarchy-iso"
 echo "$OMARCHY_MIRROR" > "$build_cache_dir/airootfs/root/omarchy_mirror"
 echo "$OMARCHY_ISO_REF" > "$build_cache_dir/airootfs/root/omarchy_iso_ref"

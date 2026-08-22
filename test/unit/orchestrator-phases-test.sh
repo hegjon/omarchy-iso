@@ -66,4 +66,19 @@ run_main die_phase
 check 'exit 1' eq "$?" 1
 check 'library message recorded' eq "$(state '.phases[-1].error')" 'library says no'
 
+section 'load order: the orchestrator ui wins over the library'
+export ARCHINSTALL_LOG_DIR="$TMP/archinstall-log"
+out=$(bash -c '
+  source "$1/archinstall-bash/lib/archinstall.sh"
+  source "$1/configs/airootfs/usr/share/omarchy-iso/orchestrator/ui.sh"
+  info hi; list_contains "a b" b && echo contained
+' _ "$ROOT" 2>&1)
+check 'info keeps the indented shape after the library loads' eq "$out" $'\n    hi\ncontained'
+out=$(bash -c '
+  source "$1/configs/airootfs/usr/share/omarchy-iso/orchestrator/ui.sh"
+  source "$1/archinstall-bash/lib/archinstall.sh"
+  info hi
+' _ "$ROOT" 2>&1)
+check 'the reverse order would lose it (why main.sh loads the library first)' eq "$out" 'hi'
+
 finish

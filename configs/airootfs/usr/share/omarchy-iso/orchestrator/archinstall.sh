@@ -1,9 +1,11 @@
 # shellcheck shell=bash
 # The wall around archinstall-bash (/usr/share/archinstall-bash), the bash port
-# of archinstall this ISO ships. It is sourced into the orchestrator's shell:
-# the phases call its functions directly (config_load, fs_*, installer_*,
-# applications_install, the PART_*/CFG_* state it parses). Keep the surface
-# the orchestrator uses listed here, so a library change has one place to hit.
+# of archinstall this ISO ships. main.sh sources it into the orchestrator's
+# shell before the orchestrator's own modules (whose info/error definitions
+# must win); the phases call its functions directly (config_load, fs_*,
+# installer_*, applications_install, the PART_*/CFG_* state it parses). Keep
+# the surface the orchestrator uses listed here, so a library change has one
+# place to hit.
 #
 # Used by the phases:
 #   config_load                     ArchConfigHandler (config + creds JSON)
@@ -20,12 +22,8 @@
 #   installer_get_kernel_params, get_parent_device_path, get_unique_path_for_device
 #   disk_is_pre_mount, sysinfo_has_uefi, CFG_* flags
 
-OMARCHY_ARCHINSTALL_LIB=${OMARCHY_ARCHINSTALL_LIB:-/usr/share/archinstall-bash/lib}
-
-arch_load_library() {
-  [[ -f $OMARCHY_ARCHINSTALL_LIB/archinstall.sh ]] || fail "archinstall-bash missing at $OMARCHY_ARCHINSTALL_LIB"
-  # shellcheck disable=SC1091
-  source "$OMARCHY_ARCHINSTALL_LIB/archinstall.sh"
+arch_init_library() {
+  declare -F config_load >/dev/null || fail 'archinstall-bash is not loaded (main.sh sources it before the orchestrator modules)'
   # The library's die() exits the phase; record its message for state.json.
   ARCHINSTALL_ON_DIE=orchestrator_record_error
 }
