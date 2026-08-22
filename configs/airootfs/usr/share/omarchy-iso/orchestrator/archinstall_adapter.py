@@ -1,246 +1,256 @@
-"""Thin compatibility wall around the archinstall Python library.
+"""Thin compatibility wall around archinstall-bash, the bash port of
+archinstall this ISO ships at /usr/share/archinstall-bash.
 
-ONLY this module imports from archinstall. Everything else uses these helpers.
-If archinstall's API churns, the blast radius is contained here.
+ONLY this module talks to it. Everything else uses these helpers, so if the
+library's interface churns the blast radius is contained here.
 
-Tested against archinstall 4.4 (Python 3.14).
+Each step is one `archinstall-step` process. The parsed configuration and the
+installer state (partition nodes, PARTUUIDs, zram flag, pacman sync) live in a
+state file under the run directory between steps, and `query` hands back what
+the Omarchy-owned Limine setup needs: partitions, flags and the kernel cmdline.
 
-The canonical call sequence (mirrored from archinstall.scripts.guided.py) is:
+The call sequence (archinstall's scripts/guided.py, reordered in
+phases_impl.arch_install_system) is:
 
-    FilesystemHandler(disk_config).perform_filesystem_operations()
-    with Installer(mountpoint, disk_config, kernels=, silent=) as inst:
-        # guided.py:84-85 SKIPS this for DiskLayoutType.Pre_mount — pre-mounted
-        # configs do their own mounting before the Installer context opens.
-        if disk_config.config_type != DiskLayoutType.Pre_mount:
-            inst.mount_ordered_layout()
-        inst.sanity_check(offline=, skip_ntp=, skip_wkd=)
-        inst.generate_key_files()                     # encrypted only
-        inst.set_mirrors(handler, mirror_config, on_target=False)
-        inst.minimal_installation(...)                # base + linux pacstrap
-        inst.set_mirrors(handler, mirror_config, on_target=True)
-        inst.setup_swap(algo=...)
-        inst.create_users(users)
-        inst.add_additional_packages(packages)
-        inst.set_timezone(tz)
-        inst.activate_time_synchronization()
-        inst.set_user_password(root_user)
-        inst.enable_service(services)
-        inst.genfstab()
+    load-config                    # ArchConfigHandler + Installer()
+    perform-filesystem-operations  # FilesystemHandler
+    mount-ordered-layout           # Installer.mount_ordered_layout
+    set-mirrors live
+    minimal-installation --no-mkinitcpio
+    set-mirrors on_target
+    setup-swap
+    create-users
+    install-applications
+    add-packages ...
+    set-timezone / activate-time-sync / set-root-password
+    genfstab
+    finish                         # Installer.__exit__ post-install check
 
-Our orchestrator installs Omarchy's Limine files directly instead of invoking
-archinstall's bootloader helper, so EFI paths and efibootmgr labels are ours
-from the start.
+Omarchy installs its own Limine files instead of a bootloader step, from the
+partition nodes and cmdline `query` reports.
 """
 
 from __future__ import annotations
 
-import importlib
-from contextlib import contextmanager
+import json
+import os
+import subprocess
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
 
-# Imports are top-level so a missing/incompatible archinstall surfaces at
-# orchestrator startup, not deep inside a phase.
-from archinstall.lib.args import ArchConfig, ArchConfigHandler
-from archinstall.lib.authentication.authentication_handler import AuthenticationHandler
-from archinstall.lib.disk.filesystem import FilesystemHandler
-from archinstall.lib.disk.utils import get_parent_device_path, get_unique_path_for_device, udev_sync
-from archinstall.lib.hardware import SysInfo
-from archinstall.lib.installer import Installer
-from archinstall.lib.mirror.mirror_handler import MirrorListHandler
-from archinstall.lib.models import Bootloader
-from archinstall.lib.models.device import DiskLayoutType, EncryptionType
-from archinstall.lib.models.users import User
-
-from .ui import info
+STEP = os.environ.get("OMARCHY_ARCHINSTALL_STEP", "archinstall-step")
 
 
-def load_arch_config(config_path: Path, creds_path: Path) -> ArchConfigHandler:
-    """Build an ArchConfigHandler from on-disk JSON.
-
-    archinstall's ArchConfigHandler reads --config / --creds from sys.argv
-    via argparse at construction time (lib/args.py:_parse_args). It does
-    NOT consult env vars for these paths. We can't pass them on our real
-    argv because the wrapper strips them before exec'ing Python (so other
-    archinstall arg-parsing code doesn't choke on our flags), so we hand
-    archinstall a synthetic argv just for this call.
-    """
-    import sys
-    saved_argv = sys.argv
-    sys.argv = [
-        saved_argv[0] if saved_argv else "omarchy-iso-install",
-        "--config", str(config_path),
-        "--creds", str(creds_path),
-    ]
-    try:
-        return ArchConfigHandler()
-    finally:
-        sys.argv = saved_argv
+class ArchInstallError(RuntimeError):
+    """An archinstall-step process exited non-zero."""
 
 
-def make_mirror_handler(offline: bool = True) -> MirrorListHandler:
-    return MirrorListHandler(offline=offline, verbose=False)
+@dataclass(frozen=True)
+class Partition:
+    """One partition of the layout, as `query` reports it."""
+
+    dev_path: Path | None
+    mountpoint: Path | None
+    partn: int | None
+    partuuid: str | None
+    uuid: str | None
+    fs_type: str | None
+    mapper_name: str | None
+
+    @property
+    def safe_dev_path(self) -> Path:
+        if self.dev_path is None:
+            raise ArchInstallError("partition has no device path yet")
+        return self.dev_path
+
+    @classmethod
+    def from_json(cls, data: dict | None) -> Partition | None:
+        if not data:
+            return None
+        return cls(
+            dev_path=Path(data["dev_path"]) if data.get("dev_path") else None,
+            mountpoint=Path(data["mountpoint"]) if data.get("mountpoint") else None,
+            partn=int(data["partn"]) if data.get("partn") is not None else None,
+            partuuid=data.get("partuuid"),
+            uuid=data.get("uuid"),
+            fs_type=data.get("fs_type"),
+            mapper_name=data.get("mapper_name"),
+        )
 
 
-def perform_filesystem_operations(arch_config: ArchConfig) -> None:
-    """Partition, format, encrypt. archinstall's FilesystemHandler is its own
-    object (separate from Installer) so we run it before opening the
-    Installer context manager.
+@dataclass(frozen=True)
+class InstallInfo:
+    """The `query` output: what the configuration asked for and what the disk
+    steps produced so far."""
 
-    parted's partition-table commit races udev: the disk wipe and the first
-    BLKPG partition registration trigger probes that briefly hold the disk
-    open, and the kernel then refuses to register the remaining partitions
-    (_ped.IOException: "Partition(s) ... have been written, but we have been
-    unable to inform the kernel"). The table is written correctly when that
-    happens — only the kernel's view is stale — so settle udev and redo the
-    operations. The wipe/partition/format sequence is idempotent."""
-    if not arch_config.disk_config:
-        raise RuntimeError("disk_config missing from arch config")
+    target: Path
+    pre_mount: bool
+    encrypted: bool
+    has_uefi: bool
+    bootloader: str | None
+    bootloader_uki: bool
+    bootloader_removable: bool
+    hostname: str
+    timezone: str
+    ntp: bool
+    swap: bool
+    zram_enabled: bool
+    mirror_config: bool
+    app_config: bool
+    kb_layout: str
+    kernels: list[str]
+    users: list[str]
+    root_password: bool
+    root: Partition | None
+    boot: Partition | None
+    efi: Partition | None
+    kernel_params: str | None
 
-    handler = FilesystemHandler(arch_config.disk_config)
+    @classmethod
+    def from_json(cls, data: dict) -> InstallInfo:
+        return cls(
+            target=Path(data["target"]),
+            pre_mount=bool(data["pre_mount"]),
+            encrypted=bool(data["encrypted"]),
+            has_uefi=bool(data["has_uefi"]),
+            bootloader=data.get("bootloader"),
+            bootloader_uki=bool(data.get("bootloader_uki")),
+            bootloader_removable=bool(data.get("bootloader_removable")),
+            hostname=data.get("hostname") or "",
+            timezone=data.get("timezone") or "",
+            ntp=bool(data.get("ntp")),
+            swap=bool(data.get("swap")),
+            zram_enabled=bool(data.get("zram_enabled")),
+            mirror_config=bool(data.get("mirror_config")),
+            app_config=bool(data.get("app_config")),
+            kb_layout=data.get("kb_layout") or "",
+            kernels=list(data.get("kernels") or []),
+            users=list(data.get("users") or []),
+            root_password=bool(data.get("root_password")),
+            root=Partition.from_json(data.get("root")),
+            boot=Partition.from_json(data.get("boot")),
+            efi=Partition.from_json(data.get("efi")),
+            kernel_params=data.get("kernel_params") or None,
+        )
 
-    # archinstall's perform_filesystem_operations defaults to a ~4.5s
-    # "5...4...3...2...1" countdown (FilesystemHandler._final_warning) before it
-    # wipes the disk. That warning is meant for its interactive TUI; in our
-    # orchestrated install it renders nowhere and just sleeps. Suppress it when
-    # the running archinstall still takes the flag — newer releases dropped both
-    # the countdown and the parameter, so only pass it when it's accepted.
-    fs_kwargs = (
-        {"show_countdown": False}
-        if _method_accepts(handler.perform_filesystem_operations, "show_countdown")
-        else {}
-    )
+    @property
+    def bootloader_enabled(self) -> bool:
+        return bool(self.bootloader) and self.bootloader != "no_bootloader"
 
-    attempts = 3
-    for attempt in range(1, attempts + 1):
-        udev_sync()
-        try:
-            handler.perform_filesystem_operations(**fs_kwargs)
-            return
-        except Exception as exc:
-            if attempt == attempts or "unable to inform the kernel" not in str(exc):
-                raise
-            info(f"› partition commit lost a udev race (attempt {attempt}/{attempts}); retrying")
-
-
-@contextmanager
-def open_installer(
-    arch_config: ArchConfig,
-    mountpoint: Path,
-    silent: bool = True,
-) -> Iterator[Installer]:
-    """Yield an open Installer; ensures __exit__ runs even on exception so
-    /mnt is left clean for a retry."""
-    if not arch_config.disk_config:
-        raise RuntimeError("disk_config missing from arch config")
-    with Installer(
-        mountpoint,
-        arch_config.disk_config,
-        kernels=arch_config.kernels,
-        silent=silent,
-    ) as installer:
-        yield installer
-
-
-def is_encrypted(arch_config: ArchConfig) -> bool:
-    disk = arch_config.disk_config
-    if not disk or not disk.disk_encryption:
-        return False
-    return disk.disk_encryption.encryption_type != EncryptionType.NO_ENCRYPTION
+    @property
+    def is_limine(self) -> bool:
+        return self.bootloader == "limine"
 
 
-def is_pre_mount(arch_config: ArchConfig) -> bool:
-    return bool(
-        arch_config.disk_config
-        and arch_config.disk_config.config_type == DiskLayoutType.Pre_mount
-    )
+class ArchInstall:
+    """The archinstall library, one `archinstall-step` process per call."""
+
+    def __init__(self, state_path: Path, target: Path) -> None:
+        self.state_path = state_path
+        self.target = target
+
+    def _run(self, *args: str, only_missing: bool = False, capture: bool = False) -> str:
+        cmd = [STEP, "--state", str(self.state_path), "--target", str(self.target)]
+        if only_missing:
+            cmd.append("--only-missing")
+        cmd.extend(args)
+        res = subprocess.run(
+            cmd,
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE if capture else None,
+        )
+        if res.returncode != 0:
+            raise ArchInstallError(f"{' '.join(args)} failed (exit {res.returncode})")
+        return res.stdout if capture else ""
+
+    # ── configuration ────────────────────────────────────────────────────────
+
+    def load_config(self, config_path: Path, creds_path: Path) -> None:
+        args = ["load-config", "--config", str(config_path)]
+        if creds_path.exists():
+            args += ["--creds", str(creds_path)]
+        self._run(*args)
+
+    def query(self) -> InstallInfo:
+        return InstallInfo.from_json(json.loads(self._run("query", capture=True)))
+
+    def kernel_params(self) -> str:
+        return self._run("kernel-params", capture=True).strip()
+
+    # ── the Installer steps, in guided.py order ──────────────────────────────
+
+    def perform_filesystem_operations(self) -> None:
+        self._run("perform-filesystem-operations")
+
+    def mount_ordered_layout(self) -> None:
+        self._run("mount-ordered-layout")
+
+    def set_mirrors(self, on_target: bool = False) -> None:
+        self._run("set-mirrors", "on_target" if on_target else "live")
+
+    def minimal_installation(self, mkinitcpio: bool = True, only_missing: bool = False) -> None:
+        args = ["minimal-installation"]
+        if not mkinitcpio:
+            args.append("--no-mkinitcpio")
+        self._run(*args, only_missing=only_missing)
+
+    def setup_swap(self) -> None:
+        self._run("setup-swap")
+
+    def create_users(self) -> None:
+        self._run("create-users")
+
+    def install_applications(self) -> None:
+        self._run("install-applications")
+
+    def add_packages(self, packages: list[str]) -> None:
+        if packages:
+            self._run("add-packages", *packages)
+
+    def enable_service(self, *units: str) -> None:
+        if units:
+            self._run("enable-service", *units)
+
+    def set_timezone(self) -> None:
+        self._run("set-timezone")
+
+    def activate_time_synchronization(self) -> None:
+        self._run("activate-time-sync")
+
+    def set_root_password(self) -> None:
+        self._run("set-root-password")
+
+    def genfstab(self) -> None:
+        self._run("genfstab")
+
+    def finish(self) -> None:
+        self._run("finish")
 
 
-def bootloader_enabled(arch_config: ArchConfig) -> bool:
-    bl = arch_config.bootloader_config
-    return bool(bl and bl.bootloader != Bootloader.NO_BOOTLOADER)
-
-
-def is_limine(arch_config: ArchConfig) -> bool:
-    bl = arch_config.bootloader_config
-    return bool(bl and bl.bootloader == Bootloader.Limine)
-
+# ── stateless helpers (lib/disk.sh, lib/hardware.sh) ──────────────────────────
 
 def has_uefi() -> bool:
-    return SysInfo.has_uefi()
+    return os.path.isdir("/sys/firmware/efi")
+
+
+def _stateless(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run([STEP, *args], check=False, text=True, capture_output=True)
 
 
 def parent_device_path(dev_path: Path) -> Path:
-    return get_parent_device_path(dev_path)
+    res = _stateless("parent-device", str(dev_path))
+    if res.returncode != 0 or not res.stdout.strip():
+        raise ArchInstallError(f"could not determine the parent device of {dev_path}: {res.stderr.strip()}")
+    return Path(res.stdout.strip())
 
 
 def unique_device_path(dev_path: Path) -> Path | None:
-    return get_unique_path_for_device(dev_path)
-
-
-def _application_handler():
-    """Return archinstall's application handler across archinstall versions."""
-    module = importlib.import_module("archinstall.lib.applications.application_handler")
-    handler = getattr(module, "application_handler", None)
-    if handler is not None and callable(getattr(handler, "install_applications", None)):
-        return handler
-
-    handler_class = getattr(module, "ApplicationHandler", None)
-    if handler_class is None:
-        raise RuntimeError("archinstall application handler is unavailable")
-    try:
-        handler = handler_class()
-    except TypeError as exc:
-        raise RuntimeError("archinstall ApplicationHandler cannot be constructed") from exc
-    if not callable(getattr(handler, "install_applications", None)):
-        raise RuntimeError("archinstall ApplicationHandler has no install_applications method")
-    return handler
-
-
-def _method_accepts(method, name: str) -> bool:
-    """Return whether a bound archinstall method accepts a named argument.
-
-    Do not use inspect.signature here: Python 3.14 may evaluate archinstall's
-    lazy annotations, and some archinstall releases annotate with names that are
-    only imported under TYPE_CHECKING.
-    """
-    fn = getattr(method, "__func__", method)
-    code = getattr(fn, "__code__", None)
-    if code is None:
-        return True
-
-    positional = code.co_varnames[:code.co_argcount]
-    kwonly = code.co_varnames[code.co_argcount:code.co_argcount + code.co_kwonlyargcount]
-    return name in (*positional, *kwonly)
-
-
-def _method_accepts_users(method) -> bool:
-    return _method_accepts(method, "users")
-
-
-def install_applications(installer: Installer, arch_config: ArchConfig) -> None:
-    """Install archinstall application selections such as PipeWire audio.
-
-    The configurator still writes archinstall's audio_config. We own phase
-    ordering now, but should not silently drop archinstall's hardware-aware
-    application installers (SOF/ALSA firmware detection, PipeWire packages,
-    Bluetooth selections, etc.).
-    """
-    app_config = arch_config.app_config
-    if not app_config:
-        return
-
-    users = arch_config.auth_config.users if arch_config.auth_config else None
-    handler = _application_handler()
-    install_applications_method = handler.install_applications
-    if _method_accepts_users(install_applications_method):
-        install_applications_method(installer, app_config, users)
-    else:
-        install_applications_method(installer, app_config)
-
-
-def root_user(arch_config: ArchConfig) -> User | None:
-    auth = arch_config.auth_config
-    if not auth or not auth.root_enc_password:
+    res = _stateless("unique-device-path", str(dev_path))
+    if res.returncode != 0 or not res.stdout.strip():
         return None
-    return User("root", auth.root_enc_password, False)
+    return Path(res.stdout.strip())
+
+
+def target_has_package(target: Path, name: str) -> bool:
+    return _stateless("target-has-package", str(target), name).returncode == 0

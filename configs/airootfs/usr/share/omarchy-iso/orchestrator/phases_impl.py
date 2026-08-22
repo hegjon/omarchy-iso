@@ -2,9 +2,8 @@
 
 Phase ordering (full-disk and protected/pre-mounted):
 
-    prepare_live           → disk cleanup when wiping, load configurator
-                             handlers (archinstall patch happens in the
-                             wrapper before Python imports it)
+    prepare_live           → disk cleanup when wiping, load the configurator
+                             output into archinstall-bash's state file
     prepare_install_target → verify pre-mounted target/ESP when the JSON uses
                              pre_mounted_config; no-op for full-disk installs
     arch_install_system    → one archinstall flow for partition/mount-or-use,
@@ -29,13 +28,11 @@ import shutil
 import subprocess
 import textwrap
 import time
-from dataclasses import replace
 from pathlib import Path
 
 from . import archinstall_adapter as arch
 from .context import InstallContext
-from .keyboard import configure_keyboard
-from .ui import error, info
+from .ui import info
 
 
 # Package targets are written by builder/build-iso.sh. Stable ISOs use the
@@ -169,9 +166,6 @@ def _early_packages() -> list[str]:
 # timeout) can take minutes on real hardware reading from USB — blocking on
 # it here stalled installs at 5% while it ground away in the background, and
 # racing it failed pacstrap with "required key missing from keyring".
-#
-# archinstall is patched in the wrapper (omarchy-iso-install) BEFORE Python
-# imports it, so no patching happens here.
 # ─────────────────────────────────────────────────────────────────────────────
 
 def prepare_live(ctx: InstallContext) -> None:
@@ -184,10 +178,9 @@ def prepare_live(ctx: InstallContext) -> None:
             subprocess.run(["omarchy-iso-cleanup-disk", disk], check=True)
 
     info("› loading configurator output")
-    ctx.state["arch_config_handler"] = arch.load_arch_config(
-        ctx.arch_config_path, ctx.creds_path
-    )
-    ctx.state["mirror_handler"] = arch.make_mirror_handler(offline=True)
+    archinstall = arch.ArchInstall(ctx.state_dir / "archinstall.state", ctx.target)
+    archinstall.load_config(ctx.arch_config_path, ctx.creds_path)
+    ctx.state["archinstall"] = archinstall
 
 
 def _install_disk(ctx: InstallContext) -> str | None:
@@ -201,10 +194,10 @@ def _install_disk(ctx: InstallContext) -> str | None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# arch_install_system: everything inside a single Installer context manager.
-# Reorders guided.py's perform_installation() so early Omarchy packages install
-# before user creation and before our Omarchy-owned Limine setup copies files
-# from the target's limine package.
+# arch_install_system: the archinstall Installer sequence, one archinstall-step
+# per call. Reorders guided.py's perform_installation() so early Omarchy
+# packages install before user creation and before our Omarchy-owned Limine
+# setup copies files from the target's limine package.
 # ─────────────────────────────────────────────────────────────────────────────
 
 def prepare_install_target(ctx: InstallContext) -> None:
@@ -220,138 +213,112 @@ def arch_install_system(ctx: InstallContext) -> None:
     a pre-mounted target, and Omarchy derives boot/fstab details from that same
     input.
     """
-    handler = ctx.state["arch_config_handler"]
-    mirror_handler = ctx.state["mirror_handler"]
-    config = handler.config
-    pre_mounted = arch.is_pre_mount(config)
+    archinstall: arch.ArchInstall = ctx.state["archinstall"]
+    install = archinstall.query()
 
-    if not pre_mounted:
+    if not install.pre_mount:
         info("› partitioning + formatting + encrypting")
-        arch.perform_filesystem_operations(config)
+        archinstall.perform_filesystem_operations()
+        info("› mounting the layout")
+        archinstall.mount_ordered_layout()
 
-    info("› opening installer context")
-    with arch.open_installer(config, ctx.target, silent=True) as installer:
-        if not pre_mounted:
-            installer.mount_ordered_layout()
+    # archinstall's sanity_check waits (NTP, reflector, keyring WKD) were
+    # always skipped here (offline, skip_ntp, skip_wkd); the port has none.
 
-        installer.sanity_check(
-            offline=True,
-            skip_ntp=True,
-            skip_wkd=True,
-        )
+    if install.mirror_config:
+        archinstall.set_mirrors(on_target=False)
 
-        if not pre_mounted and arch.is_encrypted(config):
-            installer.generate_key_files()
+    _mount_offline_package_cache(ctx)
+    _mask_mkinitcpio_pacman_hooks(ctx)
+    try:
+        info("› installing base system (mkinitcpio deferred to final Limine UKI build)")
+        # Hostname, locale and the console keymap (written with systemd-firstboot,
+        # never booting the target) are part of minimal-installation.
+        archinstall.minimal_installation(mkinitcpio=False)
 
-        if config.mirror_config:
-            installer.set_mirrors(mirror_handler, config.mirror_config, on_target=False)
+        if install.mirror_config:
+            archinstall.set_mirrors(on_target=True)
 
-        _mount_offline_package_cache(ctx)
-        _mask_mkinitcpio_pacman_hooks(ctx)
-        try:
-            info("› installing base system (mkinitcpio deferred to final Limine UKI build)")
-            # An empty kb_layout makes archinstall's set_keyboard_language skip
-            # booting the target in a container just to run localectl; the
-            # keymap is configured offline right after instead.
-            kb_layout = config.locale_config.kb_layout if config.locale_config else ""
-            installer.minimal_installation(
-                optional_repositories=(
-                    config.mirror_config.optional_repositories
-                    if config.mirror_config else []
-                ),
-                mkinitcpio=False,
-                hostname=config.hostname,
-                locale_config=(
-                    replace(config.locale_config, kb_layout="")
-                    if config.locale_config else None
-                ),
-                pacman_config=config.pacman_config,
-            )
+        if install.swap:
+            archinstall.setup_swap()
+            _drop_archinstall_zram_conf(ctx)
 
-            if not configure_keyboard(installer.target, kb_layout):
-                error(f"Invalid keyboard language specified: {kb_layout}")
+        _install_early_packages(archinstall)
+        _configure_limine_boot(ctx, archinstall)
 
-            if config.mirror_config:
-                installer.set_mirrors(mirror_handler, config.mirror_config, on_target=True)
+        info("› creating user (with /etc/skel populated)")
+        if install.users:
+            archinstall.create_users()
 
-            if config.swap and config.swap.enabled:
-                installer.setup_swap(algo=config.swap.algorithm)
-                _drop_archinstall_zram_conf(ctx)
+        if install.app_config:
+            info("› installing archinstall application selections")
+            archinstall.install_applications()
 
-            _install_early_packages(installer)
-            _configure_limine_boot(ctx, installer, config)
+        info("› installing Omarchy runtime + omarchy-base.packages")
+        archinstall.add_packages(_runtime_package_list(ctx))
 
-            info("› creating user (with /etc/skel populated)")
-            if config.auth_config and config.auth_config.users:
-                installer.create_users(config.auth_config.users)
+        # Tailscale is bundled in the offline mirror but only installed
+        # when an autoinstall drive staged an auth key; must happen here,
+        # while the mirror is still bind-mounted, not in the phase that
+        # configures the join.
+        if ctx.tailscale_authkey_path is not None:
+            info("› installing tailscale (auth key staged for first boot)")
+            archinstall.add_packages(["tailscale"])
+    finally:
+        _unmask_mkinitcpio_pacman_hooks(ctx)
+        _unmount_offline_package_cache(ctx)
 
-            if config.app_config:
-                info("› installing archinstall application selections")
-                arch.install_applications(installer, config)
+    # Standard arch finishers.
+    if install.timezone:
+        archinstall.set_timezone()
+    if install.ntp:
+        archinstall.activate_time_synchronization()
+    if install.root_password:
+        archinstall.set_root_password()
 
-            info("› installing Omarchy runtime + omarchy-base.packages")
-            installer.add_additional_packages(_runtime_package_list(ctx))
+    if install.pre_mount:
+        _write_pre_mounted_fstab(ctx)
+    else:
+        archinstall.genfstab()
 
-            # Tailscale is bundled in the offline mirror but only installed
-            # when an autoinstall drive staged an auth key; must happen here,
-            # while the mirror is still bind-mounted, not in the phase that
-            # configures the join.
-            if ctx.tailscale_authkey_path is not None:
-                info("› installing tailscale (auth key staged for first boot)")
-                installer.add_additional_packages(["tailscale"])
-        finally:
-            _unmask_mkinitcpio_pacman_hooks(ctx)
-            _unmount_offline_package_cache(ctx)
-
-        # Standard arch finishers.
-        if config.timezone:
-            installer.set_timezone(config.timezone)
-        if config.ntp:
-            installer.activate_time_synchronization()
-        if root := arch.root_user(config):
-            installer.set_user_password(root)
-
-        if pre_mounted:
-            _write_pre_mounted_fstab(ctx)
-        else:
-            installer.genfstab()
+    archinstall.finish()
 
 
-def _configure_limine_boot(ctx: InstallContext, installer, config) -> None:
-    if not arch.bootloader_enabled(config):
+def _configure_limine_boot(ctx: InstallContext, archinstall: arch.ArchInstall) -> None:
+    # Queried here, after the disk steps and setup_swap: partition nodes,
+    # PARTUUIDs and the zram flag in the cmdline only exist from now on.
+    install = archinstall.query()
+    if not install.bootloader_enabled:
         return
-    if not arch.is_limine(config):
+    if not install.is_limine:
         raise RuntimeError("Omarchy installs only support Limine bootloader setup")
 
     info("› installing bootloader (Limine)")
-    if arch.is_pre_mount(config):
+    if install.pre_mount:
         _install_pre_mounted_limine(ctx)
     else:
-        _install_limine_omarchy(ctx, installer, config)
+        _install_limine_omarchy(ctx, install)
 
     info("› writing Limine config")
-    if arch.is_pre_mount(config):
+    if install.pre_mount:
         _write_pre_mounted_limine_defaults(ctx)
     else:
-        _write_limine_defaults_from_config(ctx, installer, config)
+        _write_limine_defaults_from_config(ctx, install)
 
 
-def _install_limine_omarchy(ctx: InstallContext, installer, config) -> None:
-    boot_partition = installer._get_boot_partition()
-    efi_partition = installer._get_efi_partition()
-    root = installer._get_root()
+def _install_limine_omarchy(ctx: InstallContext, install: arch.InstallInfo) -> None:
+    boot_partition = install.boot
+    efi_partition = install.efi
+    root = install.root
 
     if boot_partition is None:
         raise RuntimeError(f"Could not detect boot at mountpoint {ctx.target}")
     if root is None:
         raise RuntimeError(f"Could not detect root at mountpoint {ctx.target}")
 
-    bootloader_config = config.bootloader_config
-    bootloader_removable = bool(
-        getattr(bootloader_config, "removable", False) if bootloader_config else False
-    )
+    bootloader_removable = install.bootloader_removable
 
-    if arch.has_uefi():
+    if install.has_uefi:
         if efi_partition is None:
             raise RuntimeError("Could not detect EFI partition")
         if not efi_partition.mountpoint:
@@ -366,8 +333,6 @@ def _install_limine_omarchy(ctx: InstallContext, installer, config) -> None:
         )
     else:
         _install_limine_bios(ctx, boot_partition)
-
-    installer._helper_flags["bootloader"] = "limine"
 
 
 def _install_pre_mounted_limine(ctx: InstallContext) -> None:
@@ -519,16 +484,16 @@ def _write_limine_pacman_hook(target: Path, hook_command: str) -> None:
     (hooks_dir / "99-omarchy-limine.hook").write_text(hook_contents)
 
 
-def _write_limine_defaults_from_config(ctx: InstallContext, installer, config) -> None:
-    if not arch.is_limine(config):
+def _write_limine_defaults_from_config(ctx: InstallContext, install: arch.InstallInfo) -> None:
+    if not install.is_limine:
         return
 
-    root = installer._get_root()
-    if root is None:
+    if install.root is None:
         raise RuntimeError(f"Could not detect root at mountpoint {ctx.target}")
+    if not install.kernel_params:
+        raise RuntimeError("Could not compute kernel cmdline from install config")
 
-    cmdline = " ".join(installer._get_kernel_params(root))
-    _write_limine_defaults(ctx, cmdline, esp_mount=_installer_esp_mount(installer))
+    _write_limine_defaults(ctx, install.kernel_params, esp_mount=_installer_esp_mount(install))
 
 
 def _write_limine_defaults(
@@ -564,10 +529,9 @@ def _write_limine_defaults(
     shutil.copy2(_limine_template(ctx, "limine.conf"), limine_conf)
 
 
-def _installer_esp_mount(installer) -> str:
-    if efi_partition := installer._get_efi_partition():
-        if efi_partition.mountpoint:
-            return str(efi_partition.mountpoint)
+def _installer_esp_mount(install: arch.InstallInfo) -> str:
+    if install.efi is not None and install.efi.mountpoint:
+        return str(install.efi.mountpoint)
     return "/boot"
 
 
@@ -624,18 +588,18 @@ def _drop_archinstall_zram_conf(ctx: InstallContext) -> None:
     zram_conf.unlink(missing_ok=True)
 
 
-def _install_early_packages(installer) -> None:
+def _install_early_packages(archinstall: arch.ArchInstall) -> None:
     bootstrap_packages = _early_bootstrap_packages()
     user_seed_packages = _early_user_seed_packages()
 
     info(f"› installing early Omarchy packages: {', '.join(bootstrap_packages)}")
-    installer.add_additional_packages(bootstrap_packages)
+    archinstall.add_packages(bootstrap_packages)
 
     info(f"› installing LuaRocks prerequisites: {', '.join(EARLY_LUAROCKS_PACKAGES)}")
-    installer.add_additional_packages(EARLY_LUAROCKS_PACKAGES)
+    archinstall.add_packages(list(EARLY_LUAROCKS_PACKAGES))
 
     info(f"› installing user seed packages: {', '.join(user_seed_packages)}")
-    installer.add_additional_packages(user_seed_packages)
+    archinstall.add_packages(user_seed_packages)
 
 
 def _mount_offline_package_cache(ctx: InstallContext) -> None:

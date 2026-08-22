@@ -131,6 +131,7 @@ DOCKER_ARGS=(
   -v "$BUILD_RELEASE_PATH/:/out/"
   -v "$BUILD_ROOT/$BUILD_SCRIPT:/$BUILD_SCRIPT:ro"
   -v "$BUILD_ROOT/archiso:/archiso:ro"
+  -v "$BUILD_ROOT/archinstall-bash:/archinstall-bash:ro"
   -v "$BUILD_ROOT/builder:/builder:ro"
   -v "$BUILD_ROOT/configs:/configs:ro"
 )

@@ -64,6 +64,13 @@ rm -rf "$build_cache_dir/airootfs/etc/xdg/reflector"
 
 # Bring in our archiso profile additions.
 cp -r /configs/* "$build_cache_dir/"
+
+# The installer library: archinstall-bash (submodule), the bash port of
+# archinstall that the orchestrator drives one step at a time through
+# archinstall-step (see orchestrator/archinstall_adapter.py).
+mkdir -p "$build_cache_dir/airootfs/usr/share/archinstall-bash" "$build_cache_dir/airootfs/usr/local/bin"
+cp -r /archinstall-bash/bin /archinstall-bash/lib /archinstall-bash/LICENSE "$build_cache_dir/airootfs/usr/share/archinstall-bash/"
+ln -sf /usr/share/archinstall-bash/bin/archinstall-step "$build_cache_dir/airootfs/usr/local/bin/archinstall-step"
 mkdir -p "$build_cache_dir/airootfs/usr/share/omarchy-iso"
 echo "$OMARCHY_MIRROR" > "$build_cache_dir/airootfs/root/omarchy_mirror"
 echo "$OMARCHY_ISO_REF" > "$build_cache_dir/airootfs/root/omarchy_iso_ref"
@@ -118,7 +125,13 @@ cp "/tmp/$NODE_FILENAME" "$build_cache_dir/airootfs/opt/packages/"
 # The selected omarchy-settings package is needed here so its post_install hook
 # drops Omarchy's plymouthd.conf into /etc/plymouth before mkarchiso builds the
 # live initramfs.
-arch_packages=(linux-t2 git gum jq openssl plymouth ttfx tzupdate omarchy-keyring "$OMARCHY_SETTINGS_PACKAGE" lvm2 cryptsetup parted)
+#
+# python and kbd used to arrive as dependencies of releng's archinstall package,
+# which is dropped below: the orchestrator and dashboard are Python, and
+# localectl's keymap list (archinstall-bash validates the layout with it) is
+# kbd's. The filesystem tools archinstall depended on are listed by releng
+# in their own right.
+arch_packages=(linux-t2 git gum jq openssl plymouth ttfx tzupdate omarchy-keyring "$OMARCHY_SETTINGS_PACKAGE" lvm2 cryptsetup parted python kbd)
 printf '%s\n' "${arch_packages[@]}" >> "$build_cache_dir/packages.x86_64"
 
 # The live ISO boots linux-t2 (see airootfs/etc/mkinitcpio.d/linux-t2.preset), so
@@ -131,8 +144,12 @@ printf '%s\n' "${arch_packages[@]}" >> "$build_cache_dir/packages.x86_64"
 # kernel we boot, so it has done nothing since we started booting T2 anyway. The
 # install is entirely offline and the live environment needs no Wi-Fi driver.
 #
+# archinstall (Python) goes too: the ISO installs with archinstall-bash, and
+# the Python package would only add pyparted, textual and friends to the
+# cold-booted squashfs.
+#
 # Anchored so linux-t2 and linux-firmware are untouched.
-sed -i -E '/^(linux|broadcom-wl)$/d' "$build_cache_dir/packages.x86_64"
+sed -i -E '/^(linux|broadcom-wl|archinstall)$/d' "$build_cache_dir/packages.x86_64"
 
 # Build the offline mirror: everything pacstrap might want during the target
 # install. With --local-source, the omarchy* packages we just built are
