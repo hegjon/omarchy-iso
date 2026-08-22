@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+#
+# Omarchy install orchestrator.
+#
+# Single tool that owns the full install phase ordering, with archinstall-bash
+# used as a library subsystem (not as the top-level installer). The live-ISO
+# wrapper (omarchy-iso-install) consumes CLI args and passes configuration
+# paths via OMARCHY_INSTALL_* environment variables.
+#
+# Phase functions run in this shell: any failing command, fail() or the
+# library's die() ends the install, and the EXIT trap does what the Python
+# orchestrator's finally did — record the failed phase for the dashboard,
+# restore CPU governors, unwind bind mounts and hook masks, tear down a
+# protected target.
+
+set -eEuo pipefail
+
+ORCHESTRATOR_DIR=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
+for _module in ui context phases archinstall install limine target_setup provisioning lifecycle; do
+  # shellcheck disable=SC1090
+  source "$ORCHESTRATOR_DIR/$_module.sh"
+done
+unset _module
+
+# Phase order. The ordering is the whole point of this orchestrator:
+# package-install hooks (limine-mkinitcpio-hook, in particular) and useradd
+# happen at points where their prerequisites are guaranteed to be in place.
+#
+# Full-disk and protected installs use the same phase sequence. The
+# configurator only changes the JSON input: full-disk asks the installer to
+# create/mount the layout, while protected provides an already-mounted target
+# and the partition details Omarchy needs for boot/fstab generation.
+build_phases() {
+  add_phase 'Preparing live environment' prepare_live
+  add_phase 'Preparing install target' prepare_install_target
+  add_phase 'Installing Arch + Omarchy' arch_install_system
+  add_phase 'Configuring hibernation' configure_hibernation
+  add_phase 'Configuring system' run_system_finalizer
+  # Before finalize_limine_boot: the deferred-provisioning cryptkey drop-in
+  # and keyfile must be in place for the final UKI build.
+  add_phase 'Staging provisioning' stage_provisioning_state
+  add_phase 'Finalizing Limine boot' finalize_limine_boot
+  add_phase 'Finalizing user' run_chroot_finalizer
+  add_phase 'Configuring login' configure_login
+  add_phase 'Configuring SSH access' configure_ssh_access
+  add_phase 'Configuring Tailscale' configure_tailscale
+  add_phase 'Configuring DNS resolver' configure_dns_resolver
+  add_phase 'Validating boot setup' validate_boot
+  add_phase 'Creating factory snapshot' create_factory_snapshot
+}
+
+main() {
+  ctx_from_env
+
+  local who=$CTX_USERNAME
+  [[ -n $who ]] || who='deferred provisioning (user created at first boot)'
+  info "Installing Omarchy for $who → $CTX_TARGET"
+
+  trap 'orchestrator_on_err "$?" "$BASH_COMMAND" "${BASH_SOURCE[0]}" "$LINENO"' ERR
+  trap orchestrator_on_exit EXIT
+  trap orchestrator_on_interrupt INT TERM
+
+  arch_load_library
+  boost_cpu_governor
+  build_phases
+  phases_run
+
+  ORCH_SUCCESS=true
+  info 'Installation complete.'
+}
+
+main "$@"

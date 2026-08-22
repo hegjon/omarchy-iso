@@ -743,7 +743,7 @@ sanitize_child_output() {
 launch_child() {
   mkdir -p "$(dirname "$LOG_FILE")"
   # Child is non-interactive. All visible UI belongs to this supervisor.
-  PYTHONUNBUFFERED=1 setsid "${INSTALL_CMD[@]}" </dev/null > >(sanitize_child_output >>"$LOG_FILE") 2>&1 &
+  setsid "${INSTALL_CMD[@]}" </dev/null > >(sanitize_child_output >>"$LOG_FILE") 2>&1 &
   child_pid=$!
   child_pgid=$child_pid
 }

@@ -126,12 +126,11 @@ cp "/tmp/$NODE_FILENAME" "$build_cache_dir/airootfs/opt/packages/"
 # drops Omarchy's plymouthd.conf into /etc/plymouth before mkarchiso builds the
 # live initramfs.
 #
-# python and kbd used to arrive as dependencies of releng's archinstall package,
-# which is dropped below: the orchestrator and dashboard are Python, and
-# localectl's keymap list (archinstall-bash validates the layout with it) is
-# kbd's. The filesystem tools archinstall depended on are listed by releng
-# in their own right.
-arch_packages=(linux-t2 git gum jq openssl plymouth ttfx tzupdate omarchy-keyring "$OMARCHY_SETTINGS_PACKAGE" lvm2 cryptsetup parted python kbd)
+# kbd used to arrive as a dependency of releng's archinstall package, which is
+# dropped below: localectl's keymap list (archinstall-bash validates the layout
+# with it) is kbd's. The filesystem tools archinstall depended on are listed
+# by releng in their own right. Nothing on the live ISO needs Python.
+arch_packages=(linux-t2 git gum jq openssl plymouth ttfx tzupdate omarchy-keyring "$OMARCHY_SETTINGS_PACKAGE" lvm2 cryptsetup parted kbd)
 printf '%s\n' "${arch_packages[@]}" >> "$build_cache_dir/packages.x86_64"
 
 # The live ISO boots linux-t2 (see airootfs/etc/mkinitcpio.d/linux-t2.preset), so

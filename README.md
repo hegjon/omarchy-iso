@@ -2,11 +2,12 @@
 
 The Omarchy ISO is the only supported way to install Omarchy. It ships the Omarchy Configurator, installs Arch Linux, installs the Omarchy packages from the bundled mirror, runs target system setup in the chroot, creates the user, and runs `omarchy-setup-user` for that user.
 
-The installer is the Python orchestrator under
-`configs/airootfs/usr/share/omarchy-iso/orchestrator/`, driving
+The installer is the bash orchestrator under
+`configs/airootfs/usr/share/omarchy-iso/orchestrator/` (`main.sh` and one
+module per concern), with
 [archinstall-bash](https://github.com/hegjon/archinstall-bash) (the `archinstall-bash`
-submodule, a bash port of archinstall scoped to what Omarchy needs) one
-`archinstall-step` at a time.
+submodule, a bash port of archinstall scoped to what Omarchy needs) sourced as
+its library. The live ISO carries no Python.
 
 ## Downloading the latest ISO
 
