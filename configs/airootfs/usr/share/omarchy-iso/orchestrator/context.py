@@ -1,6 +1,6 @@
 """Install context: parsed configurator output, invocation paths, and a
 mutable `state` dict for objects that live across phases (e.g., the
-archinstall config handler and mirror list handler)."""
+archinstall-bash driver)."""
 
 from __future__ import annotations
 
@@ -34,8 +34,8 @@ class InstallContext:
     log_path: Path = Path("/var/log/omarchy-install.log")
     target_log_path: Path = Path("/mnt/var/log/omarchy-install.log")
 
-    # Mutable per-run state shared across phases (e.g., 'arch_config_handler',
-    # 'mirror_handler'). Phases populate as needed; later phases read.
+    # Mutable per-run state shared across phases (e.g., 'archinstall', the
+    # archinstall-bash driver). Phases populate as needed; later phases read.
     state: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -78,9 +78,9 @@ class InstallContext:
         arch_configuration.pop("omarchy_install", None)
 
         if defer_provisioning:
-            # The userless invariant covers the archinstall config too: a
-            # combined/legacy config could carry account authentication that
-            # archinstall would still act on (users, a root password). Strip
+            # The userless invariant covers the archinstall-format config too:
+            # a combined/legacy config could carry account authentication that
+            # the installer would still act on (users, a root password). Strip
             # every such field so no account is created before first boot.
             _strip_account_fields(arch_configuration)
 
@@ -90,9 +90,9 @@ class InstallContext:
         if defer_provisioning:
             # Encrypted deferred-provisioning installs have no user password to protect LUKS
             # with. Generate a throwaway passphrase (staged for first-boot
-            # re-key by the stage_provisioning_state phase) and hand it to archinstall
-            # through both places it may look: the disk_encryption block and
-            # the credentials file.
+            # re-key by the stage_provisioning_state phase) and hand it to the
+            # installer through both places it may look: the disk_encryption
+            # block and the credentials file.
             _inject_provisioning_encryption_password(arch_configuration, user_credentials)
             creds_path = state_dir / "provisioning-user_credentials.json"
             creds_path.write_text(json.dumps(user_credentials, indent=2) + "\n")
@@ -144,7 +144,7 @@ class InstallContext:
 
 
 def _strip_account_fields(arch_configuration: dict) -> None:
-    """Remove every field archinstall reads to create users or set a root
+    """Remove every field the installer reads to create users or set a root
     password, so it cannot ship a hidden provisioning account.
     Encryption material lives elsewhere (disk_config.disk_encryption) and is
     untouched."""
@@ -158,7 +158,7 @@ def _strip_account_fields(arch_configuration: dict) -> None:
 
 
 def _inject_provisioning_encryption_password(arch_configuration: dict, user_credentials: dict) -> None:
-    """Ensure an encrypted deferred-provisioning install has a LUKS passphrase archinstall can
+    """Ensure an encrypted deferred-provisioning install has a LUKS passphrase the installer can
     use. Reuse one the input already carries (an autoinstall rig may supply
     its own); otherwise generate a throwaway. Mutates the disk_encryption
     block in place — arch_configuration shares it with user_configuration, so

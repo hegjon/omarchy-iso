@@ -6,7 +6,7 @@ Phase ordering (full-disk and protected/pre-mounted):
                              output into archinstall-bash's state file
     prepare_install_target → verify pre-mounted target/ESP when the JSON uses
                              pre_mounted_config; no-op for full-disk installs
-    arch_install_system    → one archinstall flow for partition/mount-or-use,
+    arch_install_system    → the archinstall-bash steps for partition/mount-or-use,
                              base install, early Omarchy packages, Limine setup,
                              useradd, runtime Omarchy packages, fstab
     configure_hibernation  → root-owned swap/resume drop-ins
@@ -206,10 +206,10 @@ def prepare_install_target(ctx: InstallContext) -> None:
 
 
 def arch_install_system(ctx: InstallContext) -> None:
-    """Install the target system from the archinstall JSON.
+    """Install the target system from the archinstall-format JSON.
 
     The phase sequence is the same for full-disk and protected installs. The
-    JSON decides whether archinstall should create/mount a disk layout or use
+    JSON decides whether the installer should create/mount a disk layout or use
     a pre-mounted target, and Omarchy derives boot/fstab details from that same
     input.
     """

@@ -1,11 +1,10 @@
 """Omarchy install orchestrator.
 
-Single tool that owns the full install phase ordering, with archinstall used as
-a library subsystem (not as the top-level installer).
+Single tool that owns the full install phase ordering, with archinstall-bash
+used as a library subsystem (not as the top-level installer).
 
 The live-ISO wrapper consumes CLI args and passes configuration paths via
-OMARCHY_INSTALL_* environment variables before Python starts. This keeps
-archinstall's import-time CLI parsing from seeing Omarchy-specific flags.
+OMARCHY_INSTALL_* environment variables before Python starts.
 """
 
 from __future__ import annotations
@@ -24,7 +23,7 @@ def build_phases(ctx: InstallContext):
     points where their prerequisites are guaranteed to be in place.
 
     Full-disk and protected installs use the same phase sequence. The
-    configurator only changes the JSON input: full-disk asks archinstall to
+    configurator only changes the JSON input: full-disk asks the installer to
     create/mount the layout, while protected provides an already-mounted target
     and the partition details Omarchy needs for boot/fstab generation.
     """

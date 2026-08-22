@@ -388,7 +388,6 @@ EOF
   cat >"$dir/user_configuration.json" <<EOF
 {
     "app_config": null,
-    "archinstall-language": "English",
     "auth_config": {},
     "audio_config": { "audio": "pipewire" },
     "bootloader_config": { "bootloader": "Limine", "uki": false, "removable": false },

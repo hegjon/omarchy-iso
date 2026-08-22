@@ -722,11 +722,12 @@ failure_menu() {
 }
 
 sanitize_child_output() {
-  # Archinstall is only a library subsystem in Omarchy's installer. Its own
-  # post-install success/reboot banner can be buffered until process exit and
-  # appear after an Omarchy failure, which makes the unified log contradictory.
-  # Keep that third-party banner out of Omarchy's support log; the raw
-  # archinstall log is still uploaded separately by omarchy-upload-log.
+  # archinstall-bash is only a library subsystem in Omarchy's installer. Its
+  # archinstall-style completion banner would read as "done" after an Omarchy
+  # failure in a later phase, which makes the unified log contradictory. Keep
+  # it out of Omarchy's support log; the library's own log
+  # (/var/log/archinstall/install.log) is still uploaded separately by
+  # omarchy-upload-log.
   sed -u \
     -e $'s/\x1b\\[[0-9;?]*[A-Za-z]//g' \
     -e '/^Activating systemd-timesyncd for time synchronization using Arch Linux and ntp.org NTP servers$/d' \

@@ -794,7 +794,6 @@ run_partition_execute() {
   cat <<-_EOF_ >user_configuration.json
 {
     "app_config": null,
-    "archinstall-language": "English",
     "auth_config": {},
     "audio_config": { "audio": "pipewire" },
     "bootloader_config": { "bootloader": "Limine", "uki": false, "removable": false },
@@ -1132,7 +1131,6 @@ fi
 cat <<-_EOF_ >user_configuration.json
 {
     "app_config": null,
-    "archinstall-language": "English",
     "auth_config": {},
     "audio_config": { "audio": "pipewire" },
     "bootloader_config": { "bootloader": "Limine", "uki": false, "removable": false },
