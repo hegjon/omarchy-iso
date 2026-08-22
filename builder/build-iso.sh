@@ -145,13 +145,16 @@ printf '%s\n' "${arch_packages[@]}" >> "$build_cache_dir/packages.x86_64"
 #
 # archinstall (Python) goes too: the ISO installs with archinstall-bash, and
 # the Python package would only add pyparted, textual and friends to the
-# cold-booted squashfs. So do cloud-init and reflector, the two other releng
-# packages that pull Python in: the autoinstall drive is read by
-# omarchy-cidata-load (bash), and reflector's service is removed above since
-# the install is offline. With those gone the live ISO carries no Python.
+# cold-booted squashfs. So do cloud-init, reflector and clonezilla, the other
+# releng packages that pull Python in: the autoinstall drive is read by
+# omarchy-cidata-load (bash), reflector's service is removed above since the
+# install is offline, and nothing here clones disks (the partition tools
+# clonezilla depends on — parted, gptfdisk, ntfs-3g, dosfstools, partclone —
+# are listed by releng in their own right and stay). With those gone the
+# live ISO carries no Python.
 #
 # Anchored so linux-t2 and linux-firmware are untouched.
-sed -i -E '/^(linux|broadcom-wl|archinstall|cloud-init|reflector)$/d' "$build_cache_dir/packages.x86_64"
+sed -i -E '/^(linux|broadcom-wl|archinstall|cloud-init|reflector|clonezilla)$/d' "$build_cache_dir/packages.x86_64"
 
 # Build the offline mirror: everything pacstrap might want during the target
 # install. With --local-source, the omarchy* packages we just built are
