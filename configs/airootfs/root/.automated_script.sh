@@ -28,6 +28,12 @@ if [[ -f /usr/share/omarchy-iso/install-debug ]]; then
   export OMARCHY_INSTALL_DEBUG=1
 fi
 
+# plymouth-quit(-wait).service are masked on the live ISO so the boot splash
+# holds the screen through getty and autologin instead of dropping to the
+# console early; end it here, right before this script paints the same logo
+# in theme colors, so the splash hands off to the wizard in one swap.
+plymouth quit >/dev/null 2>&1 || true
+
 # Tokyo Night palette so the live VT matches the installed look.
 set_tokyo_night_colors() {
   echo -en "\e]P01a1b26"; echo -en "\e]P1f7768e"; echo -en "\e]P29ece6a"
