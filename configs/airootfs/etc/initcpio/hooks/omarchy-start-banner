@@ -1,0 +1,12 @@
+#!/usr/bin/ash
+# The earliest point the ISO can put feedback on screen: everything before
+# this (bootloader load, kernel unpack) belongs to firmware. From here the
+# initramfs still has to coldplug devices, wait for the boot medium, and
+# mount a squashfs off it — tens of seconds on slow media, during which the
+# console would otherwise show at most a stray kernel line. The tty1 setup
+# script prints the same line again after autologin, because getty clears
+# the console it inherits.
+
+run_earlyhook() {
+    printf '\n  \033[90mStarting the installer...\033[0m\n' > /dev/console
+}
