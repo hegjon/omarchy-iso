@@ -2,12 +2,27 @@
 
 build() {
     add_runscript
+
+    # The initramfs carries its own copy of the Plymouth theme; append the
+    # ISO's starting line to it. This hook must sit after 'plymouth' in
+    # HOOKS: add_file overwrites, so the later hook's copy wins. The live
+    # root's copy of the theme gets the same append in customize_airootfs.sh.
+    local theme=/usr/share/plymouth/themes/omarchy/omarchy.script
+    local snippet=/usr/share/omarchy-iso/plymouth-starting-line.script
+    local patched
+    [[ -f $theme && -f $snippet ]] || return 0
+    grep -q 'omarchy-starting-line' "$theme" && return 0
+    patched=$(mktemp)
+    cat "$theme" "$snippet" >"$patched"
+    add_file "$patched" "$theme" 644
+    rm -f "$patched"
 }
 
 help() {
     cat <<HELPEOF
-Prints a dim 'Starting the installer...' line on the console as soon as the
-initramfs starts, covering the seconds before Plymouth's splash can draw.
-Purely cosmetic; adds nothing else to the image.
+Live-ISO boot feedback: prints a dim 'Starting the installer...' line on the
+console as soon as the initramfs starts (the seconds before Plymouth can
+draw, and the whole story on machines with no KMS console), and appends the
+same line, under the logo, to the initramfs copy of the Plymouth theme.
 HELPEOF
 }

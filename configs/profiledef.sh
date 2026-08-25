@@ -35,6 +35,7 @@ file_permissions=(
   ["/root/.automated_script.sh"]="0:0:755"
   ["/root/.gnupg"]="0:0:700"
   ["/root/configurator"]="0:0:755"
+  ["/root/customize_airootfs.sh"]="0:0:755"
   ["/usr/local/bin/choose-mirror"]="0:0:755"
   ["/usr/local/bin/omarchy-cidata-load"]="0:0:755"
   ["/usr/local/bin/omarchy-iso-cleanup-disk"]="0:0:755"
