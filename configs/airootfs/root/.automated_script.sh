@@ -52,9 +52,15 @@ show_start_frame() {
   local logo=/usr/share/omarchy/logo.txt
   local cols rows logo_w logo_h top pad line
   cols=$(tput cols) rows=$(tput lines)
-  logo_w=$(awk '{ if (length > max) max = length } END { print max+0 }' "$logo" 2>/dev/null)
 
-  if [[ ! -f $logo ]] || (( cols <= logo_w )); then
+  # The file check must come first: under set -e, awk failing on a missing
+  # file would kill this entry script before any guard ran.
+  if [[ ! -f $logo ]]; then
+    printf '\n  \e[90mStarting the installer...\e[0m\n'
+    return 0
+  fi
+  logo_w=$(awk '{ if (length > max) max = length } END { print max+0 }' "$logo")
+  if (( cols <= logo_w )); then
     printf '\n  \e[90mStarting the installer...\e[0m\n'
     return 0
   fi
