@@ -7,5 +7,9 @@
 # whose console never gets a KMS driver.
 
 run_earlyhook() {
-    printf '\n  \033[90mStarting the installer...\033[0m\n' > /dev/console
+    # Theme colors before the first glyph: background to the theme's dark
+    # (palette 0) and the dim tone to its gray-blue (palette 8), then clear
+    # so the whole screen takes the background — this line matches the
+    # splash and the wizard frames instead of gray-on-black.
+    printf '\033]P01a1b26\033]P8414868\033[2J\033[H\n  \033[90mStarting the installer...\033[0m\n' > /dev/console
 }

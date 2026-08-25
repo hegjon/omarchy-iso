@@ -2,7 +2,9 @@
 # ISO only. The splash here always precedes the installer, so say so, in the
 # same dim tone and position the console frames and greeter use — the text
 # rides under the logo from the first splash frame to the wizard.
-starting.text = Image.Text("Starting the installer...", 0.255, 0.282, 0.408);
+# Monospace at the console font's 16px cell height, so this line and the
+# console frames that follow it read as one face.
+starting.text = Image.Text("Starting the installer...", 0.255, 0.282, 0.408, 1, "Monospace 12");
 starting.sprite = Sprite(starting.text);
 starting.sprite.SetX(Window.GetWidth() / 2 - starting.text.GetWidth() / 2);
 starting.sprite.SetY(Window.GetHeight() / 2 + logo.image.GetHeight() / 2 + 28);
