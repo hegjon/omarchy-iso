@@ -138,6 +138,13 @@ check "failed unit is a corrupt medium" 1 "$RC" "install medium is corrupt: re-f
 run_helper loaded "failed" 0 timeout
 check "timed-out unit is a slow medium" 1 "$RC" "install medium is too slow" "$OUT"
 
+# systemd stops a timed-out unit before it settles into failed, so the wait
+# passes through deactivating. Waiting that out is what keeps the slow-medium
+# advice: classifying it as terminal answered "did not run" instead.
+run_helper loaded $'activating\ndeactivating\ndeactivating\nfailed' 0 timeout
+check "a unit still stopping is waited out, not called unrunnable" 1 "$RC" \
+  "install medium is too slow" "$OUT"
+
 # Never started and start leaves it inactive: cannot verify.
 run_helper loaded "inactive" 0
 check "unit that will not run fails" 1 "$RC" "did not run" "$OUT"
