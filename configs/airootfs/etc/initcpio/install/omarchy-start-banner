@@ -6,6 +6,9 @@ build() {
     local logo=/usr/share/omarchy/logo.txt width_file
     [[ -f $logo ]] || return 0
     add_file "$logo" /omarchy-logo.txt 644
+    # The hook sizes the console with stty, which the initramfs busybox does
+    # not provide as an applet.
+    add_binary stty
 
     # The hook centers by display columns, which busybox ash cannot count in
     # the logo's multi-byte block glyphs — measure once here instead.
