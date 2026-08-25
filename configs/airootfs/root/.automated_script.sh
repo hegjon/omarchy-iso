@@ -41,11 +41,37 @@ set_tokyo_night_colors() {
 }
 set_tokyo_night_colors
 
-# The only feedback between autologin and the greeter's first draw. On slow
-# media the next steps page gum and the configurator in from the boot medium,
-# leaving this screen otherwise blank for several seconds; the greeter clears
-# it. Palette index 8 is the theme's dim tone, matching the wizard's hints.
-printf '\n  \e[90mStarting the installer...\e[0m\n'
+# The only feedback between autologin (getty clears the console, taking the
+# initramfs banner with it) and the greeter's first draw. On slow media the
+# next steps page gum and the configurator in from the boot medium, leaving
+# this screen otherwise blank for several seconds. Same frame and row math as
+# the greeter, so the logo holds still when the wizard takes over; a console
+# too narrow for the logo gets the bare line. Index 2 is the theme's green,
+# index 8 its dim tone, matching the wizard.
+show_start_frame() {
+  local logo=/usr/share/omarchy/logo.txt
+  local cols rows logo_w logo_h top pad line
+  cols=$(tput cols) rows=$(tput lines)
+  logo_w=$(awk '{ if (length > max) max = length } END { print max+0 }' "$logo" 2>/dev/null)
+
+  if [[ ! -f $logo ]] || (( cols <= logo_w )); then
+    printf '\n  \e[90mStarting the installer...\e[0m\n'
+    return 0
+  fi
+
+  logo_h=$(wc -l <"$logo")
+  top=$(( (rows - logo_h - 4) / 2 ))
+  (( top >= 0 )) || top=0
+  pad=$(( (cols - logo_w) / 2 ))
+
+  printf '\e[%d;1H\e[32m' $(( top + 1 ))
+  while IFS= read -r line; do
+    printf "%${pad}s%s\n" '' "$line"
+  done <"$logo"
+  printf '\e[0m\e[%d;1H' $(( top + logo_h + 2 ))
+  printf "%$(( (cols - 25) / 2 ))s\e[90m%s\e[0m\n" '' 'Starting the installer...'
+}
+show_start_frame
 
 mkdir -p /var/log
 touch "$OMARCHY_INSTALL_LOG_FILE"
