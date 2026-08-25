@@ -72,6 +72,7 @@ fi
 
 reported=false
 progress_drawn=false
+settling=0
 # The \r progress line needs terminating before anything else writes to the
 # terminal. Only a verified image gets the cosmetic 100%; a failure (which
 # includes a timed-out, unfinished read) just ends the line.
@@ -119,6 +120,21 @@ while :; do
         progress_drawn=true
       fi
       sleep 0.5
+      ;;
+    deactivating)
+      # A start timeout stops the unit before it settles into failed, and the
+      # stop is what the medium makes slow: SIGTERM does not land on a read
+      # stuck in the driver. Classifying this state now would answer "did not
+      # run" for the one case the size-based TimeoutStartSec exists to name,
+      # so wait for the terminal state -- bounded past DefaultTimeoutStopSec,
+      # because a read on a dead medium may never be reaped at all.
+      if ((settling < 240)); then
+        settling=$((settling + 1))
+        sleep 0.5
+        continue
+      fi
+      finish_progress
+      fail "install medium is too slow: try another USB stick or port"$'\n'"the root image read could not be stopped after its size-based timeout"
       ;;
     *)
       fail "$UNIT did not run; cannot verify the root image"
