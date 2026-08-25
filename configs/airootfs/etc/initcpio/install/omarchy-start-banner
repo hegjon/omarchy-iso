@@ -1,0 +1,13 @@
+#!/bin/bash
+
+build() {
+    add_runscript
+}
+
+help() {
+    cat <<HELPEOF
+Prints a dim 'Starting the installer...' line on the console as soon as the
+initramfs starts, so slow install media show life long before the live
+system's tty1 script can. Purely cosmetic; adds nothing else to the image.
+HELPEOF
+}
