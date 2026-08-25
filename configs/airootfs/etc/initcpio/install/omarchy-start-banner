@@ -2,12 +2,25 @@
 
 build() {
     add_runscript
+
+    local logo=/usr/share/omarchy/logo.txt width_file
+    [[ -f $logo ]] || return 0
+    add_file "$logo" /omarchy-logo.txt 644
+
+    # The hook centers by display columns, which busybox ash cannot count in
+    # the logo's multi-byte block glyphs — measure once here instead.
+    width_file=$(mktemp)
+    LC_ALL=C.UTF-8 awk '{ if (length > max) max = length } END { print max+0 }' \
+        "$logo" > "$width_file"
+    add_file "$width_file" /omarchy-logo.width 644
+    rm -f "$width_file"
 }
 
 help() {
     cat <<HELPEOF
-Prints a dim 'Starting the installer...' line on the console as soon as the
-initramfs starts, so slow install media show life long before the live
-system's tty1 script can. Purely cosmetic; adds nothing else to the image.
+Shows life on the console while the initramfs works: a dim 'Starting the
+installer...' line the moment init runs, then the centered Omarchy logo with
+that line beneath it once the KMS console is up — the same frame the live
+system's greeter opens on. Purely cosmetic.
 HELPEOF
 }

@@ -1,12 +1,41 @@
 #!/usr/bin/ash
-# The earliest point the ISO can put feedback on screen: everything before
-# this (bootloader load, kernel unpack) belongs to firmware. From here the
+# The earliest feedback the ISO can put on screen: everything before this
+# (bootloader load, kernel unpack) belongs to firmware. From here the
 # initramfs still has to coldplug devices, wait for the boot medium, and
 # mount a squashfs off it — tens of seconds on slow media, during which the
-# console would otherwise show at most a stray kernel line. The tty1 setup
-# script prints the same line again after autologin, because getty clears
-# the console it inherits.
+# console would otherwise show at most a stray kernel line.
 
 run_earlyhook() {
     printf '\n  \033[90mStarting the installer...\033[0m\n' > /dev/console
+}
+
+# By this point udev's coldplug has loaded the KMS driver, so the console has
+# its real size: replace the bare line with the same centered logo frame the
+# greeter opens on, using the greeter's row math so the logo does not move
+# when the wizard takes over. A machine stuck on the 80-column VGA console is
+# one column too narrow for the logo and keeps the plain line.
+run_hook() {
+    local rows cols logo_w logo_h top pad line
+
+    [ -f /omarchy-logo.txt ] || return 0
+    logo_w=$(cat /omarchy-logo.width 2>/dev/null)
+    set -- $(stty size < /dev/console 2>/dev/null)
+    rows=${1:-0} cols=${2:-0}
+    case "$rows$cols$logo_w" in ''|*[!0-9]*) return 0 ;; esac
+    [ "$cols" -gt "$logo_w" ] || return 0
+
+    logo_h=$(wc -l < /omarchy-logo.txt)
+    # Greeter layout: logo + blank + tagline + blank + hint, centered.
+    top=$(( (rows - logo_h - 4) / 2 ))
+    [ "$top" -ge 0 ] || top=0
+    pad=$(( (cols - logo_w) / 2 ))
+
+    {
+        printf '\033[2J\033[%d;1H\033[32m' "$(( top + 1 ))"
+        while IFS= read -r line; do
+            printf "%${pad}s%s\n" '' "$line"
+        done < /omarchy-logo.txt
+        printf '\033[0m\033[%d;1H' "$(( top + logo_h + 2 ))"
+        printf "%$(( (cols - 25) / 2 ))s\033[90m%s\033[0m\n" '' 'Starting the installer...'
+    } > /dev/console
 }
