@@ -41,6 +41,12 @@ set_tokyo_night_colors() {
 }
 set_tokyo_night_colors
 
+# The only feedback between autologin and the greeter's first draw. On slow
+# media the next steps page gum and the configurator in from the boot medium,
+# leaving this screen otherwise blank for several seconds; the greeter clears
+# it. Palette index 8 is the theme's dim tone, matching the wizard's hints.
+printf '\n  \e[90mStarting the installer...\e[0m\n'
+
 mkdir -p /var/log
 touch "$OMARCHY_INSTALL_LOG_FILE"
 
