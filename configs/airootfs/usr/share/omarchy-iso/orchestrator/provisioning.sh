@@ -338,6 +338,9 @@ create_factory_snapshot() {
   device=${device%%\[*}
   [[ -n $device ]] || fail "could not determine the btrfs device backing $CTX_TARGET"
 
+  # The keyring unit writes into @; the snapshot must not catch it midway.
+  join_target_keyring_init
+
   local top="$CTX_STATE_DIR/factory-top"
   mkdir -p "$top"
   mount -o subvolid=5 "$device" "$top"

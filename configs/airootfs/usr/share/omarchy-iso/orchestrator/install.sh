@@ -59,35 +59,6 @@ omarchy_runtime_package() { package_target runtime; }
 omarchy_settings_package() { package_target settings; }
 omarchy_nvim_package() { package_target nvim; }
 
-# Packages installed BEFORE useradd. The selected omarchy-settings package and
-# omarchy-nvim populate /etc/skel so the user's home gets seeded correctly, and
-# omarchy-settings also ships the limine/snapper configs. Target-side setup
-# commands are installed later by the selected Omarchy runtime package and
-# executed in chroot.
-EARLY_BOOTSTRAP_BASE_PACKAGES=(base-devel git limine efibootmgr omarchy-keyring)
-
-# Install LuaRocks before omarchy-nvim pulls in lua51-lpeg. Arch's lua-luarocks
-# post_install script tries to rebuild manifests for existing rocks trees before
-# the unversioned luarocks-admin command exists if both arrive in the wrong
-# transaction order. Splitting this transaction avoids the harmless but noisy
-# "luarocks-admin: command not found" line during ISO installs.
-EARLY_LUAROCKS_PACKAGES=(lua51 luarocks)
-
-early_bootstrap_packages() {
-  printf '%s\n' "${EARLY_BOOTSTRAP_BASE_PACKAGES[@]}" "$(omarchy_settings_package)"
-}
-
-early_user_seed_packages() {
-  omarchy_nvim_package
-  echo
-}
-
-early_packages() {
-  early_bootstrap_packages
-  printf '%s\n' "${EARLY_LUAROCKS_PACKAGES[@]}"
-  early_user_seed_packages
-}
-
 # ─────────────────────────────────────────────────────────────────────────────
 # prepare_live: ready the live ISO for the install — tear down any previous
 # holders on the install disk (via the bash helper), then parse the
@@ -125,16 +96,31 @@ install_disk() {
   user_configuration_get '.disk_config.device_modifications // [] | map(select(.wipe == true)) | .[0].device'
 }
 
+# Everything that can fail before the disk is touched. The next phase
+# partitions, formats and encrypts as its first step, and a failure after
+# that leaves a wiped (or wiped and encrypted) disk with no system on it: so
+# the stream, its checksum and a layout the image can land on are all checked
+# here, where failing costs nothing.
 prepare_install_target() {
   if [[ $CTX_IS_PROTECTED == true ]]; then
     verify_protected_mounts
+    # The protected layout exists already; check the real mounts.
+    root_image_target_mounts
+  else
+    verify_root_image_layout
   fi
+  verify_root_image_stream
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# arch_install_system: the archinstall-bash steps, in guided.py's order but
-# reordered so early Omarchy packages install before user creation and before
-# our Omarchy-owned Limine setup copies files from the target's limine package.
+# arch_install_system: archinstall-bash partitions and mounts per the
+# configurator JSON, the root image is unpacked onto the mounted layout, and
+# the library finishes with the per-machine package delta, users, and fstab.
+#
+# The phase sequence is the same for full-disk and protected installs. The
+# JSON decides whether the installer should create/mount a disk layout or use
+# a pre-mounted target, and Omarchy derives boot/fstab details from that same
+# input.
 # ─────────────────────────────────────────────────────────────────────────────
 
 arch_install_system() {
@@ -147,8 +133,10 @@ arch_install_system() {
     installer_mount_ordered_layout
   fi
 
-  # archinstall's sanity_check waits (NTP, reflector, keyring WKD) were always
-  # skipped here (offline, skip_ntp, skip_wkd); the library has none.
+  # Before anything writes into the target: the image replaces the (empty)
+  # root subvolume the installer created, and everything written there first
+  # would go with it.
+  install_root_image
 
   if [[ $CFG_HAS_MIRROR_CONFIG == true ]]; then
     installer_set_mirrors live
@@ -157,9 +145,11 @@ arch_install_system() {
   mount_offline_package_cache
   mask_mkinitcpio_pacman_hooks / "${DEFERRED_BOOT_HOOKS[@]}"
 
-  info '› installing base system (mkinitcpio deferred to final Limine UKI build)'
-  # Hostname, locale and the console keymap (written with systemd-firstboot,
-  # never booting the target) are part of minimal installation.
+  info '› installing per-machine packages (mkinitcpio deferred to final Limine UKI build)'
+  # With INSTALLER_STRAP_ONLY_MISSING the base strap reduces to the packages
+  # the image does not carry (the kernel and the CPU microcode); hostname,
+  # locale and the console keymap (written with systemd-firstboot, never
+  # booting the target) are part of minimal installation as before.
   installer_minimal_installation --no-mkinitcpio
 
   if [[ $CFG_HAS_MIRROR_CONFIG == true ]]; then
@@ -171,7 +161,6 @@ arch_install_system() {
     drop_archinstall_zram_conf
   fi
 
-  install_early_packages
   configure_limine_boot
 
   info '› creating user (with /etc/skel populated)'
@@ -180,14 +169,12 @@ arch_install_system() {
   fi
 
   if [[ $CFG_HAS_APP_CONFIG == true ]]; then
+    # The image carries the application handlers' package sets (PipeWire and
+    # friends); the strap-only-missing mode reduces this to the
+    # hardware-detected firmware.
     info '› installing archinstall application selections'
     applications_install
   fi
-
-  info '› installing Omarchy runtime + omarchy-base.packages'
-  local -a runtime_packages
-  mapfile -t runtime_packages < <(runtime_package_list)
-  installer_add_additional_packages "${runtime_packages[@]}"
 
   # Tailscale is bundled in the offline mirror but only installed when an
   # autoinstall drive staged an auth key; must happen here, while the mirror
@@ -199,6 +186,11 @@ arch_install_system() {
 
   unmask_mkinitcpio_pacman_hooks / "${DEFERRED_BOOT_HOOKS[@]}"
   unmount_offline_package_cache
+
+  # After the last pacstrap: each one runs its own pacman-key --init on the
+  # target's gnupg dir. Runs on while the phases below configure the target;
+  # create_factory_snapshot joins it.
+  start_target_keyring_init
 
   # Standard arch finishers.
   [[ -n $CFG_TIMEZONE ]] && { installer_set_timezone "$CFG_TIMEZONE" || true; }
@@ -225,21 +217,6 @@ arch_install_system() {
 # zram-generator package and service that setup_swap installs.
 drop_archinstall_zram_conf() {
   rm -f "$CTX_TARGET/etc/systemd/zram-generator.conf"
-}
-
-install_early_packages() {
-  local -a bootstrap seed
-  mapfile -t bootstrap < <(early_bootstrap_packages)
-  mapfile -t seed < <(early_user_seed_packages)
-
-  info "› installing early Omarchy packages: $(IFS=', '; echo "${bootstrap[*]}")"
-  installer_add_additional_packages "${bootstrap[@]}"
-
-  info "› installing LuaRocks prerequisites: $(IFS=', '; echo "${EARLY_LUAROCKS_PACKAGES[*]}")"
-  installer_add_additional_packages "${EARLY_LUAROCKS_PACKAGES[@]}"
-
-  info "› installing user seed packages: $(IFS=', '; echo "${seed[*]}")"
-  installer_add_additional_packages "${seed[@]}"
 }
 
 # Let pacstrap consume bundled packages without copying them first.
@@ -338,26 +315,6 @@ unmask_mkinitcpio_pacman_hooks() {
     fi
   done
   return 0
-}
-
-# Selected Omarchy runtime package + every package in the ISO-bundled base
-# package list that isn't already installed early.
-runtime_package_list() {
-  local base_pkgs_file="$OMARCHY_ISO_SHARE/omarchy-base.packages" runtime line
-  runtime=$(omarchy_runtime_package)
-  local already
-  already=$(printf '%s\n' "$(early_packages)" "$runtime" "$(omarchy_settings_package)" "$(omarchy_nvim_package)" omarchy omarchy-settings omarchy-nvim)
-  printf '%s\n' "$runtime"
-  local -a seen=("$runtime")
-  while IFS= read -r line; do
-    line=${line#"${line%%[![:space:]]*}"}
-    line=${line%"${line##*[![:space:]]}"}
-    [[ -z $line || $line == \#* ]] && continue
-    grep -qxF -- "$line" <<<"$already" && continue
-    list_contains "${seen[*]}" "$line" && continue
-    seen+=("$line")
-    printf '%s\n' "$line"
-  done <"$base_pkgs_file"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────

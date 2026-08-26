@@ -27,7 +27,7 @@ if [[ ! -f $OMARCHY_ARCHINSTALL_LIB/archinstall.sh ]]; then
 fi
 # shellcheck disable=SC1091
 source "$OMARCHY_ARCHINSTALL_LIB/archinstall.sh"
-for _module in ui context phases archinstall install limine target_setup provisioning lifecycle; do
+for _module in ui context phases archinstall root_image install limine target_setup provisioning lifecycle; do
   # shellcheck disable=SC1090
   source "$ORCHESTRATOR_DIR/$_module.sh"
 done

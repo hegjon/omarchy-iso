@@ -9,7 +9,7 @@ set -uo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 ORCHESTRATOR="$ROOT/configs/airootfs/usr/share/omarchy-iso/orchestrator"
-for _m in ui context phases archinstall install limine target_setup provisioning lifecycle; do
+for _m in ui context phases archinstall root_image install limine target_setup provisioning lifecycle; do
   # shellcheck disable=SC1090
   source "$ORCHESTRATOR/$_m.sh"
 done

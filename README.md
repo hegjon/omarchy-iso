@@ -1,6 +1,6 @@
 # Omarchy ISO
 
-The Omarchy ISO is the only supported way to install Omarchy. It ships the Omarchy Configurator, installs Arch Linux, installs the Omarchy packages from the bundled mirror, runs target system setup in the chroot, creates the user, and runs `omarchy-setup-user` for that user.
+The Omarchy ISO is the only supported way to install Omarchy. It ships the Omarchy Configurator, unpacks a pre-built Arch Linux + Omarchy root image onto the target with `btrfs receive`, installs the per-machine packages (kernel, microcode, audio firmware) from the bundled mirror, runs target system setup in the chroot, creates the user, and runs `omarchy-setup-user` for that user.
 
 The installer is the bash orchestrator under
 `configs/airootfs/usr/share/omarchy-iso/orchestrator/` (`main.sh` and one
@@ -12,6 +12,14 @@ its library. The live ISO carries no Python.
 ## Downloading the latest ISO
 
 See the ISO link on [omarchy.org](https://omarchy.org).
+
+Every published ISO has a `.sha256` beside it at the same URL. Download both into the same directory and check the ISO before writing it to a USB stick:
+
+```bash
+sha256sum -c omarchy-3.0.iso.sha256
+```
+
+Corruption anywhere in the ISO is worth catching before the write, and corruption in the bundled package mirror is worth catching most: the mirror lives inside the ISO and the installer reads it straight off the medium, so those bytes surface minutes into the install as a pacman "invalid or corrupted package" error rather than as anything that names the download. Corruption elsewhere is louder and earlier — it stops the medium booting or mounting. There is a `.sig` beside the ISO too for anyone who wants to verify it against the Omarchy signing key.
 
 ## Creating the ISO
 
@@ -129,6 +137,8 @@ Scenarios under `test/integration.d/` boot a real ISO install in QEMU and assert
 
 The first scenario is `factory-reset`: it proves `omarchy-system-factory-reset` hands a machine on without destroying a shared ESP. The installed ESP gets a Windows entry with payload plus a second Linux cloned under a foreign machine-id with its own boot directory and UKIs; a real factory reset is then driven through a guest pty, and the harness asserts the foreign entries survive both the staged reset and first-boot provisioning, that the old Omarchy identity is fully retired, and that the machine reaches first-boot setup unattended.
 
+`corrupt-image` proves a bad install medium is refused before the disk is touched. It copies the ISO, overwrites a few bytes deep inside the root image (the recorded sha256 stays right; the bytes under it don't, like a badly flashed stick), and autoinstalls from that copy: `omarchy-root-image-verify.service` (which hashes the image at boot, while a user would be in the configurator) must fail, the install must halt in its pre-flight phase with the "re-flash" advice on screen, and the target disk must still have no partition table. It boots the ISO itself rather than the base image, so it also works standalone with `OMARCHY_INTEGRATION_ISO` set.
+
 Artifacts — screenshots, the fixtured/staged/final `limine.conf`, the reset typescript, and the factory-reset log — land under `test-runs/<iso>-integration/runs/<timestamp>-<scenario>/`, and `--no-preview` skips the `imv` review just like the acceptance harness.
 
 ## Signing the ISO
@@ -137,7 +147,7 @@ Run `./bin/omarchy-iso-sign [release/omarchy.iso]`. The signing key is retrieved
 
 ## Uploading the ISO
 
-Run `./bin/omarchy-iso-upload [release/omarchy.iso]`. This requires rclone configuration (`rclone config`).
+Run `./bin/omarchy-iso-upload [release/omarchy.iso]`. This requires rclone configuration (`rclone config`). The `.sig` and `.sha256` sidecars go up with the ISO when they exist beside it.
 
 ## Full release of the ISO
 

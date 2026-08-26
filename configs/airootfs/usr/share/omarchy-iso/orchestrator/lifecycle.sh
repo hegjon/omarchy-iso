@@ -58,12 +58,19 @@ cleanup_target_hook_masks() {
 # Tear down protected-mode mounts and LUKS mapper after a failed install.
 # Successful protected installs intentionally keep the target mounted until
 # reboot.
+#
+# Swapoff, umount -R, and close of the mappers the mounts were backed by —
+# shared with the dashboard's pre-reboot release. omarchy_root is named
+# explicitly because a failure between luksOpen and mount leaves it open with
+# nothing in the mount table for the release to see. On failure the script
+# names the holders on stderr; surface that in the install log.
 cleanup_protected_state() {
   [[ $CTX_IS_PROTECTED == true ]] || return 0
-  umount -R "$CTX_TARGET" >/dev/null 2>&1 || true
-  if [[ -e /dev/mapper/omarchy_root ]]; then
-    cryptsetup close omarchy_root >/dev/null 2>&1 || true
-  fi
+  local out line
+  out=$(omarchy-release-install-target "$CTX_TARGET" omarchy_root 2>&1) || true
+  while IFS= read -r line; do
+    [[ -n $line ]] && info "release: $line"
+  done <<<"$out"
 }
 
 # ── exit handling (installed by main) ─────────────────────────────────────────
@@ -91,6 +98,9 @@ orchestrator_on_exit() {
     fi
   fi
   restore_cpu_governors
+  # No-op after a completed install (create_factory_snapshot joined it); on a
+  # failure it ends the unit before the target is torn down.
+  stop_target_keyring_init
   cleanup_bind_mounts
   cleanup_live_hook_masks
   cleanup_target_hook_masks

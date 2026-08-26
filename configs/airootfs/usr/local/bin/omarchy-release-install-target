@@ -1,0 +1,88 @@
+#!/bin/bash
+#
+# Release the install target: deactivate every swap area under it,
+# recursively unmount it, and close the LUKS mappers that backed it. The one
+# source of truth for letting go of the target — the dashboard runs it
+# before offering the install medium's removal, and the orchestrator's
+# protected-failure cleanup runs it naming the mapper it may have opened.
+#
+# The swapoff comes first because active swap is an invisible holder: the
+# hibernation setup's swapon in the chroot lands in the shared kernel, fuser
+# then shows no process and the submounts unmount fine, yet the filesystem
+# reports busy until the swap is off. The mappers to close are read off the
+# mount table before the unmount empties it, and each one's device-mapper
+# UUID must carry the CRYPT- prefix before the close is attempted —
+# cryptsetup close happily removes a non-crypt mapping (LVM, linear), so the
+# sweep is bounded by that check, not by trust in a refusal. A busy crypt
+# mapper still fails its close, and the failure is reported.
+#
+# Extra arguments name mappers to close beyond what the mount table shows:
+# a failure between luksOpen and mount leaves a mapper open with nothing
+# mounted from it, which the table sweep cannot see.
+#
+# Idempotent: a target with nothing mounted and no mapper left open exits 0.
+# Exits nonzero when the tree stayed mounted (umount -R failed) or a crypt
+# mapper stayed open — either way the target is not fully let go, and the
+# dashboard's removal offer and immediate-reboot choice key on exactly that.
+
+set -uo pipefail
+
+target="${1:?usage: omarchy-release-install-target <mountpoint> [mapper ...]}"
+shift
+mappers=("$@")
+
+sync
+
+while IFS=' ' read -r swap_path _; do
+  [[ $swap_path == "$target"/* ]] && swapoff "$swap_path" 2>/dev/null
+done < <(tail -n +2 /proc/swaps 2>/dev/null)
+
+while IFS= read -r source; do
+  source="${source%%\[*}"
+  [[ $source == /dev/mapper/* ]] && mappers+=("${source#/dev/mapper/}")
+done < <(findmnt -rn -o SOURCE -R "$target" 2>/dev/null | sort -u)
+
+# On failure, name the holders on stderr: this is the diagnosis the swapfile
+# hunt needed once, done by the machine. fuser over lsof because the live
+# ISO ships psmisc and not lsof, and the holder table is what gets acted on.
+if mountpoint -q "$target"; then
+  if ! umount -R "$target"; then
+    {
+      echo "could not unmount $target; holders:"
+      fuser -vm "$target" 2>&1
+      echo "still mounted under it:"
+      findmnt -rn -R "$target"
+      echo "active swap:"
+      tail -n +2 /proc/swaps
+    } >&2
+    exit 1
+  fi
+fi
+
+# A mapper can be mounted outside the target tree too: the orchestrator
+# stage-mounts the same filesystem under /run/omarchy-install during some
+# phases, and a mid-phase failure can leave one behind — the close would
+# then fail silently on a device the target-tree unmount never saw.
+close_failed=0
+for mapper in "${mappers[@]}"; do
+  while IFS= read -r mountpoint; do
+    umount -R "$mountpoint" 2>/dev/null
+  done < <(findmnt -rn -o TARGET -S "/dev/mapper/$mapper" 2>/dev/null)
+  # Crypt mappings only — a foreign mapper under the target (or a stale name
+  # passed as an argument) is not ours to tear down, and cryptsetup would
+  # remove it without complaint. A missing mapper falls out here too, which
+  # keeps the no-op run silent the way idempotency wants.
+  uuid=$(dmsetup info -c --noheadings -o uuid "$mapper" 2>/dev/null)
+  [[ $uuid == CRYPT-* ]] || continue
+  if ! cryptsetup close "$mapper" 2>/dev/null && [[ -e /dev/mapper/$mapper ]]; then
+    {
+      echo "could not close mapper $mapper; holders:"
+      fuser -vm "/dev/mapper/$mapper" 2>&1
+      dmsetup info "$mapper" 2>&1
+    } >&2
+    close_failed=1
+  fi
+done
+
+sync
+exit $close_failed

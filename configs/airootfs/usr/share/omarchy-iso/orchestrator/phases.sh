@@ -42,6 +42,19 @@ phases_write_state() {
   mv "$tmp" "$path"
 }
 
+# Phases that can measure themselves (the root image unpack, the verify
+# wait) publish phase_progress (0..1) for the dashboard. It means nothing
+# across phases, and every regular phase-boundary write regenerates the state
+# without it — exactly the clearing the Python orchestrator did explicitly.
+# Best effort: progress display must never fail an install.
+phases_write_progress() {
+  local fraction=$1
+  [[ $fraction =~ ^[0-9]+([.][0-9]+)?$ ]] || return 0
+  [[ -n $PHASE_STATE_PATH ]] || return 0
+  phases_write_state "$PHASE_STATE_PATH" \
+    "$(jq -n --argjson p "$fraction" '{phase_progress: ([0, ([1, $p] | min)] | max)}')" 2>/dev/null || true
+}
+
 phases_record() {
   local name=$1 status=$2 elapsed=$3 err=${4:-}
   PHASES_JSON=$(jq -c --arg name "$name" --arg status "$status" --argjson elapsed "$elapsed" --arg err "$err" \
