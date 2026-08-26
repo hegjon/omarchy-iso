@@ -107,8 +107,11 @@ assert_refused() {
     ssh_live_root "! lsblk -rno TYPE /dev/vda | grep -qx part && ! blkid /dev/vda"
   check "dashboard shows the installation stopped" \
     screen_shows "installation stopped"
+  # The advice renders in the summary block's pink-on-dark, which OCR misses
+  # (the same reason slow-medium asserts its advice from the log); the
+  # dashboard's own log carries the identical line untruncated.
   check "dashboard shows the re-flash advice" \
-    screen_shows "re-flash"
+    grep -q "failed phase: .*re-flash it" "$RUN_DIR/omarchy-install.log"
 }
 
 # ---------------------------------------------------------------------- main
