@@ -103,6 +103,16 @@ assert_nbd_medium() {
     ssh_live_root "grep -q 'copytoram=n' /proc/cmdline"
   check "root image stream is reachable on the netboot medium" \
     ssh_live_root "test -f /run/archiso/bootmnt/arch/x86_64/omarchy-root.btrfs"
+  # The mirror is a directory on the same medium, bind-mounted over the path
+  # pacman's [offline] repo points at. Over the wire that is an ISO9660 read over
+  # NBD, which nothing else here exercises -- and an install that cannot
+  # read a package is exactly as dead as one that cannot read the root image.
+  check "offline mirror is reachable on the netboot medium" \
+    ssh_live_root "test -f /run/archiso/bootmnt/arch/x86_64/mirror/offline.db.tar.gz"
+  check "the offline mirror is mounted from it" \
+    ssh_live_root "mountpoint -q /var/cache/omarchy/mirror/offline"
+  check "packages are readable through the mounted mirror" \
+    ssh_live_root "test -s /var/cache/omarchy/mirror/offline/offline.db && ls /var/cache/omarchy/mirror/offline/*.pkg.tar.zst >/dev/null"
 }
 
 assert_installed_system() {

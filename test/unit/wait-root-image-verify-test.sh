@@ -33,7 +33,10 @@ run_helper() { # loadstate, active_seq, start_rc, [result]  ->  sets RC and OUT
   local box; box=$(mktemp -d)
   mkdir -p "$box/bin" "$box/medium/arch/x86_64" "$box/sys/block/sdz/queue"
   : >"$box/medium/arch/x86_64/omarchy-root.btrfs"
-  : >"$box/medium/arch/x86_64/omarchy-root.btrfs.sha256"
+  # One manifest covers the stream and the offline mirror; the helper reads it
+  # by that name, and hash_pct falls back to the stream's own size when the
+  # mirror is absent, as it is in this box.
+  : >"$box/medium/arch/x86_64/sha256sums"
 
   # WITH_HASHER_PROC=1: a fake hasher (pid 4242) holds the stream at pos 512
   # of 1024 bytes, and the helper draws progress into $box/progress. The shim

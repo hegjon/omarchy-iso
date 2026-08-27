@@ -59,9 +59,9 @@ fi
 
 # Warm the page cache for the root image and bundled packages while the user
 # works through the wizard. The install streams ~5GB of root image into btrfs
-# receive and then pacstraps a few packages out of the offline mirror; on media
-# slower than the unpack the install is read-bound and every byte cached here
-# is a byte it never waits for. On faster media this costs nothing but
+# receive and then pacstraps a few packages out of the offline mirror;
+# on media slower than the unpack the install is read-bound and every byte
+# cached here is a byte it never waits for. On faster media this costs nothing but
 # otherwise-idle bandwidth: the medium is untouched while the user types, and
 # the target disk it writes to later is a different device.
 #
@@ -69,10 +69,13 @@ fi
 # OOMing, and a budget so small machines never evict what was just warmed.
 # Set OMARCHY_NO_PREFETCH=1 to A/B the same ISO with this disabled.
 warm_offline_mirror() {
-  local mirror=/var/cache/omarchy/mirror/offline
-  local budget_kb spent_kb=0 size_kb path
+  local budget_kb spent_kb=0 size_kb
   # The orchestrator's ROOT_IMAGE_STREAM.
   local image=/run/archiso/bootmnt/arch/x86_64/omarchy-root.btrfs
+  # The mirror as it lies on the medium: its own directory in the ISO9660 tree,
+  # read here rather than through the bind mount so this works whether or not
+  # the mount unit has come up yet.
+  local mirror=/run/archiso/bootmnt/arch/x86_64/mirror
 
   [[ ${OMARCHY_NO_PREFETCH:-} == 1 ]] && return 0
 
@@ -101,6 +104,7 @@ warm_offline_mirror() {
 
   # Then the mirror, largest first: when the budget cannot cover all of it
   # this still front-loads the bytes that dominate.
+  local path
   while read -r size_kb path; do
     ((spent_kb + size_kb > budget_kb)) && continue
     cat -- "$path" >/dev/null 2>&1 || true

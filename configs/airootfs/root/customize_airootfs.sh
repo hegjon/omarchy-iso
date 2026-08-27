@@ -1,41 +1,36 @@
 #!/bin/bash
 #
 # Runs inside the live root while mkarchiso builds it, after the live packages
-# were pacstrapped from the bundled mirror. Drop the package files the root
-# image already provides (build-iso.sh lists what to keep); nothing at install
-# time can download them, since the same versions are installed from the
-# image. The repo db is left complete so `pacman -S --needed` over package
-# lists that mix image packages with new ones still resolves every name.
+# were pacstrapped from the bundled mirror.
+#
+# The mirror itself is not in here any more: it ships as ordinary files in the
+# ISO9660 tree beside the root image (builder/stage-mirror-files.sh) and is
+# bind-mounted over this path at boot by var-cache-omarchy-mirror-offline.mount. All
+# that belongs in the squashfs is the empty mount point, so this asserts
+# exactly that -- a package file left here would be a second, stale copy of
+# archives the image already holds, silently adding its own size to the ISO.
 
 set -euo pipefail
 
 mirror=/var/cache/omarchy/mirror/offline
-shipped_list=/usr/share/omarchy-iso/offline-mirror.shipped
 
-[[ -f $shipped_list && -d $mirror ]] || exit 0
-
-declare -A shipped=()
-while IFS= read -r filename; do
-  [[ -n $filename ]] && shipped["$filename"]=1
-done <"$shipped_list"
-
-if (( ${#shipped[@]} == 0 )); then
-  echo "ERROR: refusing to prune the shipped mirror with an empty selection" >&2
+if [[ ! -d $mirror ]]; then
+  echo "ERROR: the offline mirror mount point is missing from the live root: $mirror" >&2
+  echo "       The mirror image has nowhere to mount, so the install would find" >&2
+  echo "       no packages at all." >&2
   exit 1
 fi
-for filename in "${!shipped[@]}"; do
-  if [[ ! -f $mirror/$filename ]]; then
-    echo "ERROR: shipped mirror selection names a missing package: $filename" >&2
-    exit 1
-  fi
-done
 
-removed=0
-for path in "$mirror"/*.pkg.tar.*; do
-  filename=${path##*/}
-  [[ $filename == *.sig ]] && continue
-  [[ -n ${shipped[$filename]+x} ]] && continue
-  rm -f -- "$path" "$path.sig"
-  removed=$((removed + 1))
-done
-echo "Removed $removed package files the root image already provides; ${#shipped[@]} remain."
+# Collected whole, then trimmed for the message: piping find into head would
+# SIGPIPE it, and under pipefail that failure arrives instead of the diagnosis.
+mapfile -t leaked < <(find "$mirror" -mindepth 1 -printf '%P\n')
+if (( ${#leaked[@]} > 0 )); then
+  echo "ERROR: the offline mirror mount point is not empty in the live root:" >&2
+  printf '  %s\n' "${leaked[@]:0:20}" >&2
+  (( ${#leaked[@]} > 20 )) && printf '  ... and %d more\n' "$(( ${#leaked[@]} - 20 ))" >&2
+  echo "       These ship inside the squashfs on top of the mirror image that" >&2
+  echo "       mounts over them, so they are dead weight in the ISO." >&2
+  exit 1
+fi
+
+echo "Offline mirror mount point is empty; the mirror ships as files on the ISO."

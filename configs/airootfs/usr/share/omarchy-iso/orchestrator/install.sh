@@ -230,6 +230,13 @@ drop_archinstall_zram_conf() {
 mount_offline_package_cache() {
   local source=/var/cache/omarchy/mirror/offline target="$CTX_TARGET/var/cache/pacman/pkg"
   [[ -d $source ]] || fail "offline package cache missing: $source"
+  # The mirror lives on the boot medium, mounted here by
+  # var-cache-omarchy-mirror-offline.mount. An empty directory means that mount
+  # did not happen -- a damaged or truncated image, or a medium that went away
+  # -- and pacstrapping from it would fail package by package instead of
+  # saying so once, now, before the target is touched.
+  mountpoint -q "$source" ||
+    fail "offline package mirror is not mounted at $source: the mirror on the install medium (arch/x86_64/mirror) did not mount"
   mkdir -p "$target"
   mount --bind "$source" "$target"
   CTX_BIND_MOUNTS+=("$target")
