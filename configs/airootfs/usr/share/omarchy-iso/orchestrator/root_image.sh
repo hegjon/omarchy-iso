@@ -29,8 +29,9 @@ ROOT_IMAGE_VERIFY_UNIT=omarchy-root-image-verify.service
 # come from the runtime package. Checked right after unpacking so a mismatched
 # image fails here with a clear message instead of three phases later.
 ROOT_IMAGE_REQUIRED_PACKAGES=(limine omarchy-keyring)
+# The unit that hashes every package on the medium.
+MIRROR_VERIFY_UNIT=omarchy-mirror-verify.service
 
-# The image carries the whole package set, so every pacman_strap in the
 # library installs only what the target lacks (the kernel and the microcode,
 # mostly) — including minimal installation's base list, the application
 # handlers' sets, and zram-generator.
@@ -99,6 +100,32 @@ verify_root_image_stream() {
     fail "${err:-$ROOT_IMAGE_VERIFY_HELPER failed with status $rc}"
   fi
   rm -f "$out_file" "$err_file"
+}
+
+# Wait for the mirror to be proven before letting the install proceed, because
+# the phase after this one formats the disk. Everything the install could read
+# is covered: not just the kernel and microcode this machine will pull, but the
+# dependencies pacman resolves later and the hardware packages chosen after the
+# image lands -- any of which failing mid-pacstrap would leave someone with no
+# system at all.
+#
+# `systemctl start` on a oneshot returns immediately if it already finished and
+# blocks if it is still running, so this waits only for what the boot-time head
+# start did not cover. On a fast medium there is nothing left to wait for; on a
+# slow one this is where that time is spent, which is the right place for it.
+verify_offline_mirror() {
+  local out
+  if ! out=$(systemctl start "$MIRROR_VERIFY_UNIT" 2>&1); then
+    local status
+    status=$(systemctl show "$MIRROR_VERIFY_UNIT" -p Result --value 2>/dev/null)
+    if [[ $status == timeout ]]; then
+      fail "install medium is too slow: verifying the offline mirror did not finish"
+    fi
+    fail "$(journalctl -b -u "$MIRROR_VERIFY_UNIT" -p err --no-pager -o cat 2>/dev/null | tail -1 ||
+      echo "install medium is corrupt: re-flash it (the offline mirror failed verification)")"
+  fi
+  info "› $(systemctl show "$MIRROR_VERIFY_UNIT" -p StatusText --value 2>/dev/null ||
+    echo 'offline mirror verified')"
 }
 
 # While the boot-time hasher is still reading the stream, mirror its read

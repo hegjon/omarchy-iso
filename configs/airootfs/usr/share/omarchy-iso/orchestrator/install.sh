@@ -110,6 +110,7 @@ prepare_install_target() {
     verify_root_image_layout
   fi
   verify_root_image_stream
+  verify_offline_mirror
 }
 
 # ─────────────────────────────────────────────────────────────────────────────

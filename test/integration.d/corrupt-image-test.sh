@@ -1,8 +1,7 @@
 #!/bin/bash
 #
 # A corrupt install medium is refused before the disk is touched. The root
-# image ships on the ISO, covered by the sha256sums manifest beside it (which
-# also covers the offline mirror); omarchy-root-image-verify
+# image ships on the ISO with its sha256 beside it; omarchy-root-image-verify
 # checks it at boot and the installer's pre-flight phase takes that verdict.
 # Damage the image data on a copy of the ISO (the checksum stays right, the
 # bytes under it don't: a badly flashed stick), autoinstall from it, and

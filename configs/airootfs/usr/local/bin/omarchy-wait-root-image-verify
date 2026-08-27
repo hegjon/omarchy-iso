@@ -21,40 +21,31 @@ set -uo pipefail
 UNIT=omarchy-root-image-verify.service
 BOOT_MEDIUM_MOUNT=/run/archiso/bootmnt
 STREAM="$BOOT_MEDIUM_MOUNT/arch/x86_64/omarchy-root.btrfs"
-CHECKSUM="$BOOT_MEDIUM_MOUNT/arch/x86_64/sha256sums"
-# What the manifest covers, for the progress fraction: the stream plus the
-# mirror the hasher moves on to once the stream is done.
-MIRROR_DIR="$BOOT_MEDIUM_MOUNT/arch/x86_64/mirror"
+CHECKSUM="$STREAM.sha256"
 
 fail() { echo "$1" >&2; exit 1; }
 
-# How far the hasher has read, as an integer percent of the whole manifest:
-# the unit's MainPID is sha256sum while it runs, and its fdinfo pos on the
-# stream is the byte offset (the same source the orchestrator mirrors into the
-# dashboard). The manifest lists the stream first, so the fraction tracks it
-# directly; once the hasher moves on to the mirror's several hundred small
-# files there is no single fd worth following, and the bar holds at the
-# stream's share of the payload until the unit finishes. Fails silently
-# between opens or once the unit is done; callers just skip that sample.
+# How far the hasher has read, as an integer percent: the unit's MainPID is
+# sha256sum while it runs, and its fdinfo pos on the stream is the byte
+# offset (the same source the orchestrator mirrors into the dashboard). The
+# stream is all but a couple of megabytes of what the unit hashes -- the repo
+# databases it also covers are noise beside it -- so the stream's own fraction
+# is the progress. Fails silently between opens or once the unit is done;
+# callers just skip that sample.
 hash_pct() {
-  local pid fd pos stream_size total
+  local pid fd pos size
   pid=$(systemctl show "$UNIT" -p MainPID --value 2>/dev/null)
   [[ $pid =~ ^[0-9]+$ && $pid -gt 0 ]] || return 1
-  stream_size=$(stat -c %s "$STREAM" 2>/dev/null) || return 1
-  ((stream_size > 0)) || return 1
-  total=$(du -sb --apparent-size "$STREAM" "$MIRROR_DIR" 2>/dev/null |
-    awk '{ sum += $1 } END { print sum }')
-  [[ $total =~ ^[0-9]+$ ]] && ((total > 0)) || total=$stream_size
+  size=$(stat -c %s "$STREAM" 2>/dev/null) || return 1
+  ((size > 0)) || return 1
   for fd in /proc/"$pid"/fd/*; do
     [[ $(readlink "$fd" 2>/dev/null) == "$STREAM" ]] || continue
     # || true: the hasher can finish mid-sample, and awk exits 2 on a file
     # that vanished; an empty pos is the case the caller already expects.
     pos=$(awk '/^pos:/ {print $2; exit}' "/proc/$pid/fdinfo/${fd##*/}" 2>/dev/null || true)
-    [[ -n $pos ]] && { echo $((pos * 100 / total)); return 0; }
+    [[ -n $pos ]] && { echo $((pos * 100 / size)); return 0; }
   done
-  # Past the stream, still hashing: everything before the mirror is done.
-  echo $((stream_size * 100 / total))
-  return 0
+  return 1
 }
 
 # --- boot medium + scheduler (absorbed from omarchy-iso-boot-medium) ---
@@ -74,7 +65,7 @@ if [[ ! -f $STREAM ]]; then
   [[ -d $BOOT_MEDIUM_MOUNT ]] || fail "boot medium is not mounted at $BOOT_MEDIUM_MOUNT: the live system was copied to RAM (copytoram) and the medium released; boot with copytoram=n"
   fail "root image stream missing: $STREAM"
 fi
-[[ -f $CHECKSUM ]] || fail "install payload checksums missing: $CHECKSUM"
+[[ -f $CHECKSUM ]] || fail "root image checksum missing: $CHECKSUM"
 
 [[ "$(systemctl show "$UNIT" -p LoadState --value 2>/dev/null)" == loaded ]] ||
   fail "$UNIT is not on this live system; cannot verify the root image"
