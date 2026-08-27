@@ -131,7 +131,10 @@ hasher_read_pos() {
   for fd in "/proc/$pid/fd"/*; do
     target=$(readlink -f "$fd" 2>/dev/null) || continue
     [[ $target == "$ROOT_IMAGE_STREAM" ]] || continue
-    pos=$(awk '/^pos:/ { print $2; exit }' "/proc/$pid/fdinfo/${fd##*/}" 2>/dev/null)
+    # || true: the hasher can exit between the MainPID read and this one,
+    # and an awk that cannot open the file exits 2, which set -eE would turn
+    # into a failed phase.
+    pos=$(awk '/^pos:/ { print $2; exit }' "/proc/$pid/fdinfo/${fd##*/}" 2>/dev/null || true)
     [[ -n $pos ]] && { printf '%s' "$pos"; return 0; }
   done
   return 0
@@ -268,7 +271,12 @@ receive_root_image() {
   btrfs receive -q "$top" <"$stream" 2>"$err" &
   local pid=$!
   while kill -0 "$pid" 2>/dev/null; do
-    pos=$(awk '/^pos:/ { print $2; exit }' "/proc/$pid/fdinfo/0" 2>/dev/null)
+    # || true is load-bearing: the receiver can exit between the kill -0
+    # above and this read, and awk exits 2 on a file it cannot open. Under
+    # set -eE that failure would abort the phase -- killing an install that
+    # was seconds from done, over a progress reading nobody needs. An empty
+    # pos is already the "no reading this time" case below.
+    pos=$(awk '/^pos:/ { print $2; exit }' "/proc/$pid/fdinfo/0" 2>/dev/null || true)
     [[ -n $pos && $total -gt 0 ]] &&
       phases_write_progress "$(awk -v p="$pos" -v t="$total" 'BEGIN { printf "%.4f", p / t }')"
     sleep 0.5
