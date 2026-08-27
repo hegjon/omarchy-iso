@@ -27,6 +27,28 @@
 
 set -uo pipefail
 
+# device-mapper's word on a mapper: prints its UUID and returns 0 when it
+# exists, 1 when it provably does not ("Device does not exist." is the
+# driver's own answer for ENXIO), and 2 when dmsetup could not answer at all
+# (control node unreachable, driver not responding) — the same rc 1 as a
+# missing mapper, told apart only by the message. The distinction matters
+# because 1 is the idempotent no-op and 2 must never pass for it: a mapper
+# that cannot be proven gone has to fail the release, and this exit status
+# is what stands between the user and pulling the medium.
+dm_err=$(mktemp)
+trap 'rm -f "$dm_err"' EXIT
+mapper_uuid() {
+  local uuid
+  if uuid=$(dmsetup info -c --noheadings -o uuid "$1" 2>"$dm_err"); then
+    printf '%s\n' "$uuid"
+    return 0
+  fi
+  grep -q "Device does not exist" "$dm_err" && return 1
+  echo "could not query mapper $1:" >&2
+  cat "$dm_err" >&2
+  return 2
+}
+
 target="${1:?usage: omarchy-release-install-target <mountpoint> [mapper ...]}"
 shift
 mappers=("$@")
@@ -71,16 +93,30 @@ for mapper in "${mappers[@]}"; do
   # Crypt mappings only — a foreign mapper under the target (or a stale name
   # passed as an argument) is not ours to tear down, and cryptsetup would
   # remove it without complaint. A missing mapper falls out here too, which
-  # keeps the no-op run silent the way idempotency wants.
-  uuid=$(dmsetup info -c --noheadings -o uuid "$mapper" 2>/dev/null)
+  # keeps the no-op run silent the way idempotency wants — but only on the
+  # driver's word for missing: an unanswerable query fails the release.
+  uuid=$(mapper_uuid "$mapper")
+  case $? in
+    1) continue ;;
+    2) close_failed=1; continue ;;
+  esac
   [[ $uuid == CRYPT-* ]] || continue
-  if ! cryptsetup close "$mapper" 2>/dev/null && [[ -e /dev/mapper/$mapper ]]; then
-    {
-      echo "could not close mapper $mapper; holders:"
-      fuser -vm "/dev/mapper/$mapper" 2>&1
-      dmsetup info "$mapper" 2>&1
-    } >&2
-    close_failed=1
+  # dmsetup, not the /dev/mapper node, decides whether the close took: the
+  # node is udev's and lags in both directions — still there for a moment
+  # after a good close (which would withhold the offer on a machine that is
+  # fine), and never there at all when device-mapper runs with udev disabled
+  # (which would hide a mapper that really did stay open). Only its provable
+  # absence counts as closed; an unanswerable probe fails like a held one.
+  if ! cryptsetup close "$mapper" 2>/dev/null; then
+    mapper_uuid "$mapper" >/dev/null
+    if (( $? != 1 )); then
+      {
+        echo "could not close mapper $mapper; holders:"
+        fuser -vm "/dev/mapper/$mapper" 2>&1
+        dmsetup info "$mapper" 2>&1
+      } >&2
+      close_failed=1
+    fi
   fi
 done
 

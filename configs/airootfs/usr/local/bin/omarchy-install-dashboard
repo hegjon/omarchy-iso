@@ -642,6 +642,20 @@ warm_reboot_path() {
   gum --version >/dev/null 2>&1 || true
 }
 
+reboot_now() {
+  # Which reboot the button gets is the other half of the release's verdict.
+  # Released: nothing anywhere is dirty and the medium may already be gone,
+  # so skip the stop jobs that would page it back in. Not released: the
+  # finish screen told the user to leave the medium in, which keeps the
+  # graceful path's cold reads safe, and systemd gets its own chance at the
+  # unmount the release could not do.
+  if [[ $TARGET_RELEASED == yes ]]; then
+    systemctl reboot -ff 2>/dev/null || reboot -f 2>/dev/null || true
+  else
+    systemctl reboot 2>/dev/null || reboot 2>/dev/null || true
+  fi
+}
+
 reboot_prompt() {
   local prompt_pad
 
@@ -999,14 +1013,7 @@ if reboot_prompt; then
     exit 0
   fi
   printf '%s' "$CLEAR" >"$TTY_PATH" 2>/dev/null || true
-  if [[ $TARGET_RELEASED == yes ]]; then
-    systemctl reboot -ff 2>/dev/null || reboot -f 2>/dev/null || true
-  else
-    # The target is still (partly) held, so let systemd unmount what the
-    # release could not: the finish screen told the user to leave the medium
-    # in, which keeps the graceful path's cold reads safe.
-    systemctl reboot 2>/dev/null || reboot 2>/dev/null || true
-  fi
+  reboot_now
 fi
 
 exit 0
