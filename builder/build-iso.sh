@@ -438,7 +438,7 @@ echo "[timing] mirror files end $(date +%s)"
 # that unit hashes (a USB 2.0 port sustains ~30 MB/s; the margin covers the
 # idle-class
 # hash yielding to the live system's page-ins) plus ten minutes of slack for
-# boot. On timeout systemd sets Result=timeout and omarchy-wait-root-image-verify
+# boot. On timeout systemd sets Result=timeout and omarchy-wait-verify
 # turns that into a "medium too slow" message instead of the corrupt-medium one.
 payload_bytes=$(stat -c %s "$root_image_stream")
 verify_dropin_dir="$build_cache_dir/airootfs/etc/systemd/system/omarchy-root-image-verify.service.d"

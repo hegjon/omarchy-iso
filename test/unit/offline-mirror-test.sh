@@ -114,8 +114,15 @@ check "the pre-flight gate waits for it" \
   grep -qF 'verify_offline_mirror' "$INSTALL_SH"
 check "it waits before anything formats the disk" \
   bash -c "(( \$(grep -n 'verify_offline_mirror' '$INSTALL_SH' | head -1 | cut -d: -f1) < \$(grep -n 'fs_perform_filesystem_operations' '$INSTALL_SH' | head -1 | cut -d: -f1) ))"
-check "waiting is a blocking start, not a poll" \
-  grep -qF 'systemctl start "$MIRROR_VERIFY_UNIT"' "$ORCH"
+# Both waits go through one helper, so the mirror inherits the state handling
+# the root image path needed: the deactivating window a start timeout opens,
+# a unit that is not loaded, and one that never ran.
+check "the mirror wait goes through the shared helper" \
+  grep -qF 'run_verify_helper "$MIRROR_VERIFY_UNIT" "the offline mirror"' "$ORCH"
+check "so does the root image wait" \
+  grep -qF 'run_verify_helper "$ROOT_IMAGE_VERIFY_UNIT" "the root image"' "$ORCH"
+check "neither hand-rolls its own systemctl wait" \
+  bash -c "! grep -qE 'systemctl start \"\\$(MIRROR|ROOT_IMAGE)_VERIFY_UNIT' '$ORCH'"
 
 # ------------------------------------------------- verifying the mirror
 

@@ -20,8 +20,7 @@ BOOT_MEDIUM_MOUNT=/run/archiso/bootmnt
 # The boot-time hash of the stream, systemd-supervised so a slow or dying
 # medium fails with its own message. The helper collects the verdict: waits
 # for the unit if it is still hashing, and starts it if it never ran.
-ROOT_IMAGE_VERIFY_HELPER=/usr/local/bin/omarchy-wait-root-image-verify
-ROOT_IMAGE_VERIFY_UNIT=omarchy-root-image-verify.service
+VERIFY_HELPER=/usr/local/bin/omarchy-wait-verify
 
 # Packages the image must carry for the rest of the install to work: Limine
 # setup reads the settings package's limine config, useradd copies the skel
@@ -29,7 +28,8 @@ ROOT_IMAGE_VERIFY_UNIT=omarchy-root-image-verify.service
 # come from the runtime package. Checked right after unpacking so a mismatched
 # image fails here with a clear message instead of three phases later.
 ROOT_IMAGE_REQUIRED_PACKAGES=(limine omarchy-keyring)
-# The unit that hashes every package on the medium.
+# The units that hash what the install reads off the medium.
+ROOT_IMAGE_VERIFY_UNIT=omarchy-root-image-verify.service
 MIRROR_VERIFY_UNIT=omarchy-mirror-verify.service
 
 # library installs only what the target lacks (the kernel and the microcode,
@@ -78,18 +78,19 @@ verify_root_image_layout() {
 # corrupt copy (a badly flashed USB is the common case) would also trip btrfs
 # receive's per-command checksums, but only after the disk is formatted.
 #
-# ROOT_IMAGE_VERIFY_HELPER is the single source of truth: it collects the
+# The helper is the single source of truth: it collects the
 # boot-time hasher's verdict, waiting for the unit if it is still running and
 # starting it if it never did, and logs the boot medium and its I/O
 # scheduler. The free-space configurator gate runs the same helper before it
 # partitions, so both disk-touching paths clear the same check; whoever gets
 # there first pays the wait. The hasher's read also leaves as much of the
 # stream as fits in the page cache for the unpack that follows.
-verify_root_image_stream() {
-  publish_verify_progress
-
+# Run the shared waiter and surface what it says: its stdout is progress and
+# context worth logging line by line, its stderr is the verdict, whose first
+# line headlines the install dashboard.
+run_verify_helper() {
   local out_file="$CTX_STATE_DIR/.verify.out" err_file="$CTX_STATE_DIR/.verify.err" rc=0 line
-  "$ROOT_IMAGE_VERIFY_HELPER" >"$out_file" 2>"$err_file" || rc=$?
+  "$VERIFY_HELPER" "$@" >"$out_file" 2>"$err_file" || rc=$?
   while IFS= read -r line; do
     [[ -n ${line// /} ]] && info "› $line"
   done <"$out_file"
@@ -97,9 +98,14 @@ verify_root_image_stream() {
   if ((rc != 0)); then
     local err
     err=$(<"$err_file")
-    fail "${err:-$ROOT_IMAGE_VERIFY_HELPER failed with status $rc}"
+    fail "${err:-$VERIFY_HELPER $1 failed with status $rc}"
   fi
   rm -f "$out_file" "$err_file"
+}
+
+verify_root_image_stream() {
+  publish_verify_progress
+  run_verify_helper "$ROOT_IMAGE_VERIFY_UNIT" "the root image" "$ROOT_IMAGE_STREAM"
 }
 
 # Wait for the mirror to be proven before letting the install proceed, because
@@ -114,18 +120,7 @@ verify_root_image_stream() {
 # start did not cover. On a fast medium there is nothing left to wait for; on a
 # slow one this is where that time is spent, which is the right place for it.
 verify_offline_mirror() {
-  local out
-  if ! out=$(systemctl start "$MIRROR_VERIFY_UNIT" 2>&1); then
-    local status
-    status=$(systemctl show "$MIRROR_VERIFY_UNIT" -p Result --value 2>/dev/null)
-    if [[ $status == timeout ]]; then
-      fail "install medium is too slow: verifying the offline mirror did not finish"
-    fi
-    fail "$(journalctl -b -u "$MIRROR_VERIFY_UNIT" -p err --no-pager -o cat 2>/dev/null | tail -1 ||
-      echo "install medium is corrupt: re-flash it (the offline mirror failed verification)")"
-  fi
-  info "› $(systemctl show "$MIRROR_VERIFY_UNIT" -p StatusText --value 2>/dev/null ||
-    echo 'offline mirror verified')"
+  run_verify_helper "$MIRROR_VERIFY_UNIT" "the offline mirror"
 }
 
 # While the boot-time hasher is still reading the stream, mirror its read

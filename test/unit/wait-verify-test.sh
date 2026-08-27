@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# omarchy-wait-root-image-verify is the single gate both disk-touching paths
+# omarchy-wait-verify is the single gate both disk-touching paths
 # clear before formatting: the orchestrator (full-disk) and the configurator
 # (free-space). It collects the boot-time hasher's verdict, waiting if it is
 # still running and starting it if it never did. This drives it with a stubbed
@@ -10,7 +10,7 @@
 set -euo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
-HELPER="$ROOT/configs/airootfs/usr/local/bin/omarchy-wait-root-image-verify"
+HELPER="$ROOT/configs/airootfs/usr/local/bin/omarchy-wait-verify"
 
 fails=0
 check() { # desc, expected_rc, actual_rc, [needle in output], [output]
@@ -97,7 +97,11 @@ EOF
   [[ -n ${WITH_HASHER_PROC:-} ]] && progress_env=(OMARCHY_VERIFY_PROGRESS="$box/progress")
 
   set +e
-  OUT=$(PATH="$box/bin:$PATH" env "${progress_env[@]}" bash "$shim" 2>&1)
+  # The helper takes its unit, its subject and (for the progress percentage)
+  # the stream, so the sandbox passes what the orchestrator passes.
+  OUT=$(PATH="$box/bin:$PATH" env "${progress_env[@]}" bash "$shim" \
+    omarchy-root-image-verify.service "the root image" \
+    "$box/medium/arch/x86_64/omarchy-root.btrfs" 2>&1)
   RC=$?
   set -e
   PROGRESS_OUT=$(cat "$box/progress" 2>/dev/null || true)
@@ -153,5 +157,5 @@ check "unit that will not run fails" 1 "$RC" "did not run" "$OUT"
 run_helper not-found "inactive" 0
 check "missing unit fails" 1 "$RC" "not on this live system" "$OUT"
 
-[[ $fails -eq 0 ]] && echo "ok: omarchy-wait-root-image-verify gate behaves"
+[[ $fails -eq 0 ]] && echo "ok: omarchy-wait-verify gate behaves"
 exit "$fails"
