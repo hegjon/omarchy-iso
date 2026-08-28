@@ -71,7 +71,7 @@ rm -rf "$build_cache_dir/airootfs/etc/xdg/reflector"
 # Bring in our archiso profile additions.
 cp -r /configs/* "$build_cache_dir/"
 
-# The installer library: archinstall-bash (submodule), the bash port of
+# The installer library: archinstall-bash (vendored in-tree), the bash port of
 # archinstall the orchestrator sources (see orchestrator/archinstall.sh).
 mkdir -p "$build_cache_dir/airootfs/usr/share/archinstall-bash"
 cp -r /archinstall-bash/bin /archinstall-bash/lib /archinstall-bash/LICENSE "$build_cache_dir/airootfs/usr/share/archinstall-bash/"

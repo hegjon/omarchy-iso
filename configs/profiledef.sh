@@ -48,7 +48,7 @@ file_permissions=(
   ["/usr/local/bin/omarchy-iso-install"]="0:0:755"
   ["/usr/local/bin/omarchy-upload-log"]="0:0:755"
   ["/usr/local/bin/omarchy-verify-mirror"]="0:0:755"
-  # Copied in by build-iso.sh from the archinstall-bash submodule; mkarchiso
+  # Copied in by build-iso.sh from the vendored archinstall-bash tree; mkarchiso
   # drops file modes on copy, so the executables must be declared here too.
   ["/usr/share/archinstall-bash/bin/archinstall"]="0:0:755"
   # Mount point only; var-cache-omarchy-mirror-offline.mount puts the mirror
