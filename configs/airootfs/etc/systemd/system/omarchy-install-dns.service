@@ -1,0 +1,15 @@
+[Unit]
+Description=Point the install target at systemd-resolved
+# One of the small config phases, hosted by run-phase; skips inside the
+# phase function when its input was not provided.
+PartOf=omarchy-install.target
+After=omarchy-install-tailscale.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/usr/share/omarchy-iso/orchestrator/context.env
+EnvironmentFile=-/run/omarchy-install/context.env
+EnvironmentFile=-/run/omarchy-install/install.env
+ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase configure_dns_resolver
+# Seconds of file writes; two minutes is a stuck guard.
+TimeoutStartSec=120

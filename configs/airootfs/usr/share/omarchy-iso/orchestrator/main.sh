@@ -55,10 +55,10 @@ build_phases() {
   add_phase 'Staging provisioning' stage_provisioning_state_unit
   add_phase 'Finalizing Limine boot' finalize_limine_boot_unit
   add_phase 'Finalizing user' run_chroot_finalizer_unit
-  add_phase 'Configuring login' configure_login
-  add_phase 'Configuring SSH access' configure_ssh_access
-  add_phase 'Configuring Tailscale' configure_tailscale
-  add_phase 'Configuring DNS resolver' configure_dns_resolver
+  add_phase 'Configuring login' configure_login_unit
+  add_phase 'Configuring SSH access' configure_ssh_access_unit
+  add_phase 'Configuring Tailscale' configure_tailscale_unit
+  add_phase 'Configuring DNS resolver' configure_dns_resolver_unit
   add_phase 'Validating boot setup' validate_boot
   add_phase 'Creating factory snapshot' create_factory_snapshot
 }

@@ -132,6 +132,12 @@ configure_dns_resolver() {
   ln -s "$target" "$resolv_conf"
 }
 
+# The phase as its systemd unit (PartOf=omarchy-install.target); the
+# function above is what run-phase hosts in the unit's own process.
+configure_dns_resolver_unit() {
+  run_phase_unit omarchy-install-dns.service 'dns configuration'
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # configure_login: seed SDDM's last user/session for the password-only Omarchy
 # greeter. Encrypted installs autologin because the LUKS prompt is the auth
@@ -160,6 +166,12 @@ configure_login() {
   rm -f "$CTX_TARGET/etc/systemd/system/getty@tty1.service.d/autologin.conf"
 
   arch-chroot "$CTX_TARGET" systemctl enable sddm.service >/dev/null 2>&1 || true
+}
+
+# The phase as its systemd unit (PartOf=omarchy-install.target); the
+# function above is what run-phase hosts in the unit's own process.
+configure_login_unit() {
+  run_phase_unit omarchy-install-login.service 'login configuration'
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -216,6 +228,12 @@ configure_ssh_access() {
 
   local rules="$CTX_TARGET/etc/ufw/user.rules"
   grep -qF -- '--dport 22 -j ACCEPT' "$rules" 2>/dev/null || fail "ufw did not record an allow rule for port 22 in $rules"
+}
+
+# The phase as its systemd unit (PartOf=omarchy-install.target); the
+# function above is what run-phase hosts in the unit's own process.
+configure_ssh_access_unit() {
+  run_phase_unit omarchy-install-ssh.service 'ssh configuration'
 }
 
 # Read the autoinstall authorized_keys: sshd's own format, one public key per
@@ -302,6 +320,12 @@ configure_tailscale() {
 
   local rules="$CTX_TARGET/etc/ufw/user.rules"
   grep -qF -- '-i tailscale0 -j ACCEPT' "$rules" 2>/dev/null || fail "ufw did not record an allow rule for tailscale0 in $rules"
+}
+
+# The phase as its systemd unit (PartOf=omarchy-install.target); the
+# function above is what run-phase hosts in the unit's own process.
+configure_tailscale_unit() {
+  run_phase_unit omarchy-install-tailscale.service 'tailscale configuration'
 }
 
 # Read the autoinstall tailscale_authkey: exactly one key, with blank lines

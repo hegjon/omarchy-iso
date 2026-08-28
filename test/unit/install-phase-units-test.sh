@@ -130,6 +130,24 @@ done
 check "the phase loop runs the user finalizer via its unit" \
   grep -qF "add_phase 'Finalizing user' run_chroot_finalizer_unit" "$ORCH/main.sh"
 
+# The config quartet, standard shape, chained in phase order.
+quartet() {
+  local name fn after
+  for spec in login:configure_login:omarchy-install-user.service \
+              ssh:configure_ssh_access:omarchy-install-login.service \
+              tailscale:configure_tailscale:omarchy-install-ssh.service \
+              dns:configure_dns_resolver:omarchy-install-tailscale.service; do
+    IFS=: read -r name fn after <<<"$spec"
+    local unit="$UNITS/omarchy-install-$name.service"
+    grep -qxF 'PartOf=omarchy-install.target' "$unit" || return 1
+    grep -qxF "After=$after" "$unit" || return 1
+    grep -qxF "ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase $fn" "$unit" || return 1
+    grep -qxF 'EnvironmentFile=-/run/omarchy-install/install.env' "$unit" || return 1
+    grep -qF "${fn}_unit" "$ORCH/main.sh" || return 1
+  done
+}
+check "the config quartet (login, ssh, tailscale, dns) is wired as units" quartet
+
 # The property the deferred-encrypted flavor of that phase depends on: the
 # generated LUKS passphrase is generated once and reused by every later
 # context rebuild — two separate processes must agree on it.
