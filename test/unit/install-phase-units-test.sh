@@ -148,6 +148,17 @@ quartet() {
 }
 check "the config quartet (login, ssh, tailscale, dns) is wired as units" quartet
 
+# Boot validation, after the quartet's tail.
+boot_validation_unit() {
+  local unit="$UNITS/omarchy-install-validate-boot.service"
+  grep -qxF 'PartOf=omarchy-install.target' "$unit" &&
+  grep -qxF 'After=omarchy-install-dns.service' "$unit" &&
+  grep -qxF 'ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase validate_boot' "$unit" &&
+  grep -qxF 'EnvironmentFile=-/run/omarchy-install/install.env' "$unit" &&
+  grep -qF "add_phase 'Validating boot setup' validate_boot_unit" "$ORCH/main.sh"
+}
+check "boot validation is wired as a unit" boot_validation_unit
+
 # run-phase itself: sourceable main.sh, dispatch, refusals — including the
 # destruction boundary, which must fail loudly rather than skip.
 check "sourcing main.sh defines but does not run the install" \

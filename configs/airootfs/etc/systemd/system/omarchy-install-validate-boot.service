@@ -1,0 +1,15 @@
+[Unit]
+Description=Validate the boot setup on the install target
+# The pre-snapshot boot audit: limine.conf, the UKI cmdline, the ESP — all
+# reads of the target's own disk state, hosted by run-phase.
+PartOf=omarchy-install.target
+After=omarchy-install-dns.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/usr/share/omarchy-iso/orchestrator/context.env
+EnvironmentFile=-/run/omarchy-install/context.env
+EnvironmentFile=-/run/omarchy-install/install.env
+ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase validate_boot
+# Read-only checks; five minutes is a stuck guard, not a budget.
+TimeoutStartSec=300

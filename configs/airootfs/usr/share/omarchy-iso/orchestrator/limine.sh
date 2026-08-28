@@ -369,6 +369,12 @@ validate_boot() {
   fi
 }
 
+# The phase as its systemd unit (PartOf=omarchy-install.target); the
+# function above is what run-phase hosts in the unit's own process.
+validate_boot_unit() {
+  run_phase_unit omarchy-install-validate-boot.service 'boot validation'
+}
+
 # A deferred-provisioning install that boots without a working first-boot
 # setup is a user-less brick; insist the armed state is complete before reboot.
 validate_provisioning_state() {

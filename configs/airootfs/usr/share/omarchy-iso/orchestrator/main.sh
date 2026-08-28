@@ -59,7 +59,7 @@ build_phases() {
   add_phase 'Configuring SSH access' configure_ssh_access_unit
   add_phase 'Configuring Tailscale' configure_tailscale_unit
   add_phase 'Configuring DNS resolver' configure_dns_resolver_unit
-  add_phase 'Validating boot setup' validate_boot
+  add_phase 'Validating boot setup' validate_boot_unit
   add_phase 'Creating factory snapshot' create_factory_snapshot
 }
 
