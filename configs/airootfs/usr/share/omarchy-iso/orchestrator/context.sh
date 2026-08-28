@@ -87,6 +87,13 @@ ctx_from_env() {
       local password
       password=$(jq -r '.disk_config.disk_encryption.encryption_password // empty' <<<"$arch_configuration")
       [[ -n $password ]] || password=$(jq -r '.encryption_password // empty' <<<"$CTX_USER_CREDENTIALS")
+      # Before generating, reuse what an earlier parse of this install
+      # persisted below: ctx_from_env must be deterministic across processes
+      # (run-phase rebuilds the context in every phase unit), and a freshly
+      # generated passphrase here would not be the one the disk was
+      # encrypted with.
+      [[ -n $password ]] ||
+        password=$(jq -r '.encryption_password // empty' "$CTX_STATE_DIR/provisioning-user_credentials.json" 2>/dev/null)
       [[ -n $password ]] || password=$(ctx_generate_passphrase)
       arch_configuration=$(jq -c --arg p "$password" '.disk_config.disk_encryption.encryption_password = $p' <<<"$arch_configuration")
       # arch_configuration shares the block with user_configuration in Python;

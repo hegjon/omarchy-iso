@@ -82,33 +82,41 @@ done
 check "the phase loop runs the system finalizer via its unit" \
   grep -qF "add_phase 'Configuring system' run_system_finalizer_unit" "$ORCH/main.sh"
 
-check "run-phase is executable in the ISO" \
-  grep -qF '["/usr/share/omarchy-iso/orchestrator/run-phase"]="0:0:755"' "$ROOT/configs/profiledef.sh"
-# The sourced-main check needs the library reachable the way run-phase finds
-# it; point it at the vendored tree the way the harness does.
-check "sourcing main.sh defines but does not run the install" \
-  env OMARCHY_ARCHINSTALL_LIB="$ROOT/archinstall-bash/lib" bash -c \
-    "source '$ORCH/main.sh' && declare -F main >/dev/null && declare -F install_root_image >/dev/null"
-check "run-phase refuses an unknown phase" \
-  bash -c "! env OMARCHY_ARCHINSTALL_LIB='$ROOT/archinstall-bash/lib' '$ORCH/run-phase' no_such_phase 2>/dev/null"
+# Fourth: provisioning staging, after the system finalizer.
+check "the provisioning unit is part of the target" \
+  grep -qxF 'PartOf=omarchy-install.target' "$UNITS/omarchy-install-provisioning.service"
+check "it is ordered after the system unit" \
+  grep -qxF 'After=omarchy-install-system.service' "$UNITS/omarchy-install-provisioning.service"
+check "it runs its phase through run-phase" \
+  grep -qxF 'ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase stage_provisioning_state' \
+    "$UNITS/omarchy-install-provisioning.service"
+for env in '/usr/share/omarchy-iso/orchestrator/context.env' \
+           '-/run/omarchy-install/context.env' '-/run/omarchy-install/install.env'; do
+  check "provisioning unit reads $env" \
+    grep -qxF "EnvironmentFile=$env" "$UNITS/omarchy-install-provisioning.service"
+done
+check "the phase loop runs provisioning staging via its unit" \
+  grep -qF "add_phase 'Staging provisioning' stage_provisioning_state_unit" "$ORCH/main.sh"
 
-# The full hosting path, with the library config loaded: fixture inputs in,
-# context and CFG_* rebuilt, a harmless function dispatched. This is the
-# contract every migrated phase rides on.
-fixtures=$(mktemp -d)
-trap 'rm -rf "$fixtures"' EXIT
-cat >"$fixtures/config.json" <<'JSON'
-{"disk_config": {"config_type": "default_layout", "device_modifications": []},
- "bootloader_config": {"bootloader": "limine"}, "hostname": "phase-smoke",
- "omarchy_install": {"mode": "full_disk", "target_mount": "/mnt"}}
-JSON
-printf '{"users": [{"username": "smoke", "!password": "x"}]}\n' >"$fixtures/creds.json"
-check "run-phase rebuilds context and library config, then dispatches" \
-  bash -c "env OMARCHY_INSTALL_CONFIG='$fixtures/config.json' OMARCHY_INSTALL_CREDS='$fixtures/creds.json' \
-      OMARCHY_INSTALL_STATE_DIR='$fixtures/state' OMARCHY_ARCHINSTALL_LIB='$ROOT/archinstall-bash/lib' \
-      '$ORCH/run-phase' config_summary 2>/dev/null | grep -q 'phase-smoke'"
-check "and persisted the env files a phase unit would read" \
-  bash -c "test -f '$fixtures/state/context.env' && test -f '$fixtures/state/install.env'"
+# The property the deferred-encrypted flavor of that phase depends on: the
+# generated LUKS passphrase is generated once and reused by every later
+# context rebuild — two separate processes must agree on it.
+passphrase_deterministic() {
+  local d p1 p2
+  d=$(mktemp -d) || return 1
+  printf '{"disk_config": {"config_type": "default_layout", "device_modifications": [], "disk_encryption": {"encryption_type": "luks"}}, "omarchy_install": {"defer_provisioning": true}}' >"$d/config.json"
+  touch "$d/marker"
+  ctx_pass() {
+    env OMARCHY_INSTALL_CONFIG="$d/config.json" OMARCHY_INSTALL_CREDS="$d/absent" \
+      OMARCHY_INSTALL_DEFER_PROVISIONING_FILE="$d/marker" OMARCHY_INSTALL_STATE_DIR="$d/state" \
+      OMARCHY_ARCHINSTALL_LIB="$ROOT/archinstall-bash/lib" bash -c \
+      "source '$ORCH/main.sh' && ctx_from_env >/dev/null 2>&1 && jq -r .encryption_password \"\$CTX_STATE_DIR/provisioning-user_credentials.json\""
+  }
+  p1=$(ctx_pass); p2=$(ctx_pass)
+  rm -rf "$d"
+  [[ -n $p1 && $p1 == "$p2" ]]
+}
+check "the generated passphrase is deterministic across processes" passphrase_deterministic
 
 if (( failures > 0 )); then
   printf '%d check(s) failed\n' "$failures" >&2

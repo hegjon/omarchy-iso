@@ -51,6 +51,12 @@ stage_provisioning_state() {
   fi
 }
 
+# The phase as its systemd unit (PartOf=omarchy-install.target); the
+# function above is what run-phase hosts in the unit's own process.
+stage_provisioning_state_unit() {
+  run_phase_unit omarchy-install-provisioning.service 'provisioning staging'
+}
+
 stage_node_tarball() {
   local provisioning_dir=$1 tarball=''
   local -a tarballs=()
