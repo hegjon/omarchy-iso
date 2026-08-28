@@ -53,7 +53,7 @@ build_phases() {
   # Before finalize_limine_boot: the deferred-provisioning cryptkey drop-in
   # and keyfile must be in place for the final UKI build.
   add_phase 'Staging provisioning' stage_provisioning_state_unit
-  add_phase 'Finalizing Limine boot' finalize_limine_boot
+  add_phase 'Finalizing Limine boot' finalize_limine_boot_unit
   add_phase 'Finalizing user' run_chroot_finalizer
   add_phase 'Configuring login' configure_login
   add_phase 'Configuring SSH access' configure_ssh_access

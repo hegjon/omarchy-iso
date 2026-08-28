@@ -259,6 +259,12 @@ finalize_limine_boot() {
   fi
 }
 
+# The phase as its systemd unit (PartOf=omarchy-install.target); the
+# function above is what run-phase hosts in the unit's own process.
+finalize_limine_boot_unit() {
+  run_phase_unit omarchy-install-limine.service 'Limine boot finalization'
+}
+
 strip_shell_quotes() {
   local v=$1
   v=${v#"${v%%[![:space:]]*}"}
