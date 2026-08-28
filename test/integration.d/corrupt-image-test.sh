@@ -36,7 +36,13 @@ corrupt_iso() {
   log "Copying the ISO and corrupting its root image"
   rm -f "$CORRUPT_ISO"
   cp --reflink=auto "$ISO" "$CORRUPT_ISO"
-  start=$(grep -Pboa -m1 'btrfs-stream\x00' "$CORRUPT_ISO" | cut -d: -f1)
+  # -F with the raw bytes in a pattern file, not -P with \xNN: Omarchy ships
+  # ugrep as grep, and ugrep's -P decodes \xNN as UTF-8 codepoints instead of
+  # raw bytes — identical for this ASCII+NUL magic, silently never matching
+  # for any pattern with bytes >= 0x80. This form means the same thing to
+  # GNU grep and ugrep.
+  printf 'btrfs-stream\0' >"$RUN_DIR/stream-magic"
+  start=$(LC_ALL=C grep -Fboa -m1 -f "$RUN_DIR/stream-magic" "$CORRUPT_ISO" | cut -d: -f1)
   [[ -n $start ]] || { echo "btrfs send stream magic not found in the ISO image" >&2; return 1; }
 
   offset=$((start + size / 3))
