@@ -6,3 +6,10 @@ Description=Omarchy installation
 # that takes every running phase's cgroup down with it. As phases migrate
 # from the orchestrator's loop into units of their own, their ordering moves
 # here as After=/Requires= edges.
+#
+# The destruction boundary: the disk phase (still inside the orchestrator's
+# install step) partitions, formats and mounts the target, and every phase
+# unit here runs strictly after it. The After= chain documents that order,
+# and run-phase enforces it independently — a hosted phase refuses to run
+# unless the target is a mountpoint, so a stray start or a mis-edged graph
+# fails loudly instead of writing into the live system.

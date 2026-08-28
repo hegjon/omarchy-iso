@@ -26,4 +26,16 @@ ctx_from_env
 arch_init_library
 arch_load_config
 
+# The destruction boundary, enforced here rather than trusted to ordering:
+# every hosted phase so far operates on the prepared target, and must never
+# run before the disk phase has formatted and mounted it — not from a stray
+# manual `systemctl start`, and not from a mis-edged future graph. A unit
+# hosting a pre-format phase declares Environment=RUN_PHASE_NO_TARGET=1 to
+# opt out. A loud failure, deliberately not a systemd Condition: conditions
+# cannot read the env-provided target path, and a false condition skips
+# with success — the orchestrator would count the phase as done.
+if [[ ${RUN_PHASE_NO_TARGET:-} != 1 ]] && ! mountpoint -q "$CTX_TARGET"; then
+  fail "run-phase: $CTX_TARGET is not a mounted install target; refusing to run $phase before the disk phase"
+fi
+
 "$phase"

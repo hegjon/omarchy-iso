@@ -148,6 +148,36 @@ quartet() {
 }
 check "the config quartet (login, ssh, tailscale, dns) is wired as units" quartet
 
+# run-phase itself: sourceable main.sh, dispatch, refusals — including the
+# destruction boundary, which must fail loudly rather than skip.
+check "sourcing main.sh defines but does not run the install" \
+  bash -c "env OMARCHY_ARCHINSTALL_LIB='$ROOT/archinstall-bash/lib' bash -c \
+    \"source '$ORCH/main.sh' && declare -F main >/dev/null && declare -F install_root_image >/dev/null\""
+check "run-phase refuses an unknown phase" \
+  bash -c "! env OMARCHY_ARCHINSTALL_LIB='$ROOT/archinstall-bash/lib' '$ORCH/run-phase' no_such_phase 2>/dev/null"
+
+fixtures=$(mktemp -d)
+trap 'rm -rf "$fixtures"' EXIT
+cat >"$fixtures/config.json" <<'JSON'
+{"disk_config": {"config_type": "default_layout", "device_modifications": []},
+ "bootloader_config": {"bootloader": "limine"}, "hostname": "phase-smoke",
+ "omarchy_install": {"mode": "full_disk", "target_mount": "/mnt"}}
+JSON
+printf '{"users": [{"username": "smoke", "!password": "x"}]}\n' >"$fixtures/creds.json"
+run_phase_env() { # extra-env... phase
+  env OMARCHY_INSTALL_CONFIG="$fixtures/config.json" OMARCHY_INSTALL_CREDS="$fixtures/creds.json" \
+    OMARCHY_INSTALL_STATE_DIR="$fixtures/state" OMARCHY_ARCHINSTALL_LIB="$ROOT/archinstall-bash/lib" \
+    "$@"
+}
+check "run-phase rebuilds context and library config, then dispatches" \
+  bash -c "$(declare -f run_phase_env); fixtures='$fixtures'; ROOT='$ROOT'
+    run_phase_env env RUN_PHASE_NO_TARGET=1 '$ORCH/run-phase' config_summary 2>/dev/null | grep -q phase-smoke"
+check "and persisted the env files a phase unit would read" \
+  bash -c "test -f '$fixtures/state/context.env' && test -f '$fixtures/state/install.env'"
+check "run-phase refuses a phase before the disk phase mounted the target" \
+  bash -c "$(declare -f run_phase_env); fixtures='$fixtures'; ROOT='$ROOT'
+    run_phase_env '$ORCH/run-phase' config_summary 2>&1 | grep -q 'not a mounted install target'"
+
 # The property the deferred-encrypted flavor of that phase depends on: the
 # generated LUKS passphrase is generated once and reused by every later
 # context rebuild — two separate processes must agree on it.
