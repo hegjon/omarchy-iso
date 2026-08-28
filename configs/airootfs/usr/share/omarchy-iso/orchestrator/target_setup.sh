@@ -207,6 +207,12 @@ run_chroot_finalizer() {
   run_target_setup_command --user "$CTX_USERNAME" /usr/bin/omarchy-provision-user --force --first-install
 }
 
+# The phase as its systemd unit (PartOf=omarchy-install.target); the
+# function above is what run-phase hosts in the unit's own process.
+run_chroot_finalizer_unit() {
+  run_phase_unit omarchy-install-user.service 'user finalization'
+}
+
 read_omarchy_mirror() {
   local mirror
   mirror=$(ctx_read_env_file /root/omarchy_mirror)

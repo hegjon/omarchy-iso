@@ -114,6 +114,22 @@ done
 check "the phase loop runs the limine finalization via its unit" \
   grep -qF "add_phase 'Finalizing Limine boot' finalize_limine_boot_unit" "$ORCH/main.sh"
 
+# Sixth: the user finalizer, after the Limine finalization.
+check "the user unit is part of the target" \
+  grep -qxF 'PartOf=omarchy-install.target' "$UNITS/omarchy-install-user.service"
+check "it is ordered after the limine unit" \
+  grep -qxF 'After=omarchy-install-limine.service' "$UNITS/omarchy-install-user.service"
+check "it runs its phase through run-phase" \
+  grep -qxF 'ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase run_chroot_finalizer' \
+    "$UNITS/omarchy-install-user.service"
+for env in '/usr/share/omarchy-iso/orchestrator/context.env' \
+           '-/run/omarchy-install/context.env' '-/run/omarchy-install/install.env'; do
+  check "user unit reads $env" \
+    grep -qxF "EnvironmentFile=$env" "$UNITS/omarchy-install-user.service"
+done
+check "the phase loop runs the user finalizer via its unit" \
+  grep -qF "add_phase 'Finalizing user' run_chroot_finalizer_unit" "$ORCH/main.sh"
+
 # The property the deferred-encrypted flavor of that phase depends on: the
 # generated LUKS passphrase is generated once and reused by every later
 # context rebuild — two separate processes must agree on it.

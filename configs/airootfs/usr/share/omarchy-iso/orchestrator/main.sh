@@ -54,7 +54,7 @@ build_phases() {
   # and keyfile must be in place for the final UKI build.
   add_phase 'Staging provisioning' stage_provisioning_state_unit
   add_phase 'Finalizing Limine boot' finalize_limine_boot_unit
-  add_phase 'Finalizing user' run_chroot_finalizer
+  add_phase 'Finalizing user' run_chroot_finalizer_unit
   add_phase 'Configuring login' configure_login
   add_phase 'Configuring SSH access' configure_ssh_access
   add_phase 'Configuring Tailscale' configure_tailscale
