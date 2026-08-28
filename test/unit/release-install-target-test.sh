@@ -129,7 +129,9 @@ EOF
 #!/bin/bash
 echo "cryptsetup $*" >>"$BOX/calls"
 rc=$(cat "$BOX/close_rc")
-if (( rc == 0 )); then
+# close_removes: the transient shape — cryptsetup reports a failure while
+# the mapping is nevertheless gone from the kernel's table.
+if (( rc == 0 )) || [[ -e $BOX/close_removes ]]; then
   awk -v m="${*: -1}" '$1 != m' "$BOX/uuids" >"$BOX/uuids.new"
   mv "$BOX/uuids.new" "$BOX/uuids"
 fi
@@ -221,6 +223,21 @@ run_release
 check "an unanswerable mapper query fails the release" 1 "$RC" \
   "could not query mapper omarchy_root" "$OUT"
 check_absent "no close is attempted on an unproven mapper" "cryptsetup" "$CALLS"
+
+# ── A close that errors while the mapper is provably gone is forgiven ────────
+# The transient shape round 5 could not reproduce on hardware: cryptsetup
+# reports a failure, yet device-mapper's table no longer holds the mapping.
+# The post-close probe must read that as closed — failing it would tell a
+# healthy machine to leave the medium in and take the graceful reboot.
+new_box
+echo 0 >"$BOX/mounted_rc"
+echo 1 >"$BOX/close_rc"
+touch "$BOX/close_removes"
+echo "/dev/mapper/omarchy_root[/@]" >"$BOX/sources"
+echo "omarchy_root CRYPT-LUKS2-2b0e-omarchy_root" >"$BOX/uuids"
+run_release
+check "a failed close with the mapper gone still releases" 0 "$RC"
+check_absent "and reports nothing to hold the medium for" "could not close" "$OUT"
 
 # ── dmsetup dying between the close and its probe is still a failed close ────
 new_box
