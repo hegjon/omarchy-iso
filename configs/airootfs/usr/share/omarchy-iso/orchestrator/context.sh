@@ -148,6 +148,18 @@ CTX_OMARCHY_PATH='$CTX_OMARCHY_PATH'
 CTX_STATE_DIR='$CTX_STATE_DIR'
 CTX_LOG_PATH='$CTX_LOG_PATH'
 EOF
+
+  # The raw OMARCHY_INSTALL_* inputs, for the systemd phase units: a phase
+  # runs in its own process (run-phase), and ctx_from_env is deterministic
+  # given these, so re-running it there rebuilds this exact context. Same
+  # dual format as context.env — units take it as an EnvironmentFile=, bash
+  # sources it.
+  local var
+  {
+    for var in $(compgen -v OMARCHY_INSTALL_); do
+      printf "%s='%s'\n" "$var" "${!var}"
+    done
+  } >"$CTX_STATE_DIR/install.env"
 }
 
 # _strip_account_fields(): encryption material lives in

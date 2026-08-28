@@ -70,6 +70,10 @@ main() {
   [[ -n $who ]] || who='deferred provisioning (user created at first boot)'
   info "Installing Omarchy for $who → $CTX_TARGET"
 
+  # The umbrella for the systemd-run phases: parts declare PartOf= it, so
+  # stopping it is the group abort that takes any running phase's cgroup.
+  systemctl start omarchy-install.target >/dev/null 2>&1 || true
+
   trap 'orchestrator_on_err "$?" "$BASH_COMMAND" "${BASH_SOURCE[0]}" "$LINENO"' ERR
   trap orchestrator_on_exit EXIT
   trap orchestrator_on_interrupt INT TERM
@@ -83,4 +87,7 @@ main() {
   info 'Installation complete.'
 }
 
-main "$@"
+# Executed (omarchy-iso-install execs this file): run the install. Sourced
+# (run-phase, which hosts one phase function in its own process for the
+# systemd phase units): definitions only.
+[[ ${BASH_SOURCE[0]} != "$0" ]] || main "$@"

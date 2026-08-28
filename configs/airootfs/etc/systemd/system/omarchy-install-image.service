@@ -1,0 +1,21 @@
+[Unit]
+Description=Unpack the Omarchy root image onto the install target
+# The first migrated phase of the install: btrfs receive of the root image
+# stream and the subvolume swap, hosted by run-phase in its own process. The
+# orchestrator starts this unit where its loop used to call the function and
+# blocks on the start — a oneshot's start job completes when the phase does,
+# with the failure in the exit status. Pre-flight gates stay the
+# orchestrator's: by this point the stream is verified and the layout mounted.
+PartOf=omarchy-install.target
+
+[Service]
+Type=oneshot
+# The install context: path defaults, this run's resolved values, and the
+# raw inputs ctx_from_env rebuilds the rest from (later files win).
+EnvironmentFile=/usr/share/omarchy-iso/orchestrator/context.env
+EnvironmentFile=-/run/omarchy-install/context.env
+EnvironmentFile=-/run/omarchy-install/install.env
+ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase install_root_image
+# TimeoutStartSec comes from a build-time drop-in sized to the stream
+# (build-iso.sh writes 50-size-timeout.conf): oneshot units have no default
+# start timeout, and the receive reads the whole stream off the medium.

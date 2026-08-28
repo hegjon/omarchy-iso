@@ -4,6 +4,7 @@ Description=Initialise the install target's per-machine pacman keyring
 # across installs); the orchestrator starts this after the last pacstrap and
 # joins it before the factory snapshot — see orchestrator/root_image.sh. A
 # unit so systemd kills the gpg-agent/dirmngr leftovers with the cgroup.
+PartOf=omarchy-install.target
 
 [Service]
 Type=oneshot

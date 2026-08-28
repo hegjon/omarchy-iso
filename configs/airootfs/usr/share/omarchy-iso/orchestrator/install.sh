@@ -136,8 +136,10 @@ arch_install_system() {
 
   # Before anything writes into the target: the image replaces the (empty)
   # root subvolume the installer created, and everything written there first
-  # would go with it.
-  install_root_image
+  # would go with it. The first phase migrated to a systemd unit
+  # (omarchy-install.target is the umbrella): run-phase hosts
+  # install_root_image in the unit's own process.
+  run_phase_unit omarchy-install-image.service 'root image unpack'
 
   if [[ $CFG_HAS_MIRROR_CONFIG == true ]]; then
     installer_set_mirrors live

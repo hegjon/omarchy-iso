@@ -17,10 +17,11 @@ for fn in fs_perform_filesystem_operations installer_mount_ordered_layout instal
           installer_add_additional_packages installer_set_timezone installer_activate_time_synchronization \
           installer_set_user_password installer_genfstab installer_finish \
           mount_offline_package_cache unmount_offline_package_cache configure_limine_boot \
-          install_root_image start_target_keyring_init \
+          start_target_keyring_init \
           write_pre_mounted_fstab; do
   eval "$fn() { record \"$fn\${*:+ \$*}\"; }"
 done
+run_phase_unit() { record "run_phase_unit $1"; }
 mask_mkinitcpio_pacman_hooks() { record "mask $1"; }
 unmask_mkinitcpio_pacman_hooks() { record "unmask $1"; }
 
@@ -35,11 +36,11 @@ section 'full-disk order'
 reset; run_phase arch_install_system
 check 'phase ok' eq "$?" 0
 check 'sequence' eq "$(steps)" \
-'arch_load_config;fs_perform_filesystem_operations;installer_mount_ordered_layout;install_root_image;installer_set_mirrors live;mount_offline_package_cache;mask /;installer_minimal_installation --no-mkinitcpio;installer_set_mirrors on_target;installer_setup_swap;configure_limine_boot;installer_create_users;applications_install;unmask /;unmount_offline_package_cache;start_target_keyring_init;installer_set_timezone UTC;installer_activate_time_synchronization;installer_set_user_password root $y$hash;installer_genfstab;installer_finish;'
+'arch_load_config;fs_perform_filesystem_operations;installer_mount_ordered_layout;run_phase_unit omarchy-install-image.service;installer_set_mirrors live;mount_offline_package_cache;mask /;installer_minimal_installation --no-mkinitcpio;installer_set_mirrors on_target;installer_setup_swap;configure_limine_boot;installer_create_users;applications_install;unmask /;unmount_offline_package_cache;start_target_keyring_init;installer_set_timezone UTC;installer_activate_time_synchronization;installer_set_user_password root $y$hash;installer_genfstab;installer_finish;'
 
 section 'invariants'
 check 'mkinitcpio deferred to the final UKI build' contains "$(steps)" 'installer_minimal_installation --no-mkinitcpio'
-check 'image unpacked before anything writes into the target' test "$(calls | grep -n '^install_root_image\|^mount_offline_package_cache' | cut -d: -f1 | tr '\n' ' ')" == '4 6 '
+check 'image unpacked before anything writes into the target' test "$(calls | grep -n '^run_phase_unit omarchy-install-image\|^mount_offline_package_cache' | cut -d: -f1 | tr '\n' ' ')" == '4 6 '
 check 'limine set up after the base delta, before useradd' test "$(calls | grep -n 'configure_limine_boot\|installer_create_users' | cut -d: -f1 | tr '\n' ' ')" == '11 12 '
 check 'package cache unmounted before genfstab' test "$(calls | grep -n 'unmount_offline_package_cache\|installer_genfstab' | cut -d: -f1 | tr '\n' ' ')" == '15 20 '
 check 'live hooks unmasked after the last pacstrap' test "$(calls | grep -n 'applications_install\|^unmask' | cut -d: -f1 | tr '\n' ' ')" == '13 14 '
@@ -49,7 +50,7 @@ section 'pre-mounted target'
 reset; PRE_MOUNT=true; run_phase arch_install_system
 check 'phase ok' eq "$?" 0
 check 'no disk steps' test -z "$(calls | grep 'fs_perform\|mount_ordered' || true)"
-check 'image still unpacked' test "$(calls | grep -c 'install_root_image')" == 1
+check 'image still unpacked' test "$(calls | grep -c 'run_phase_unit omarchy-install-image')" == 1
 check 'own fstab instead of genfstab' test "$(calls | grep -c 'write_pre_mounted_fstab')" == 1 -a -z "$(calls | grep installer_genfstab || true)"
 check 'finish still last' eq "$(calls | tail -n1)" installer_finish
 

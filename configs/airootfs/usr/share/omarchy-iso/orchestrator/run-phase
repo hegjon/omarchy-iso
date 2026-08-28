@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Host one orchestrator phase function in its own process, for the systemd
+# phase units: `run-phase install_root_image` is what
+# omarchy-install-image.service execs. Sources the same stack main.sh loads
+# (main.sh runs nothing when sourced), rebuilds the install context from the
+# persisted inputs the unit's EnvironmentFile= handed us, and calls the one
+# function. Its exit status is the unit's Result; its output is the journal.
+set -eEuo pipefail
+
+phase=${1:?usage: run-phase <phase-function>}
+
+# shellcheck disable=SC1091
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/main.sh"
+
+declare -F "$phase" >/dev/null ||
+  fail "run-phase: no such phase function: $phase"
+
+ctx_from_env
+"$phase"
