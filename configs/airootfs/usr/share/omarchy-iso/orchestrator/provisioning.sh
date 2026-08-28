@@ -381,6 +381,12 @@ create_factory_snapshot() {
   unset 'CTX_BIND_MOUNTS[-1]'
 }
 
+# The phase as its systemd unit (PartOf=omarchy-install.target); the
+# function above is what run-phase hosts in the unit's own process.
+create_factory_snapshot_unit() {
+  run_phase_unit omarchy-install-factory-snapshot.service 'factory snapshot'
+}
+
 factory_snapshot_in() {
   local top=$1 factory="$1/@factory"
   [[ -d $top/@ ]] || fail "no @ subvolume at the top level"

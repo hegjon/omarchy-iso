@@ -1,0 +1,17 @@
+[Unit]
+Description=Create the factory snapshot of the install target
+# The last phase: join the keyring unit (systemd state, readable from any
+# process), then snapshot @ as the factory baseline. Its stage mount is
+# registered per process and run-phase unmounts it if the phase dies.
+PartOf=omarchy-install.target
+After=omarchy-install-validate-boot.service omarchy-target-keyring.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/usr/share/omarchy-iso/orchestrator/context.env
+EnvironmentFile=-/run/omarchy-install/context.env
+EnvironmentFile=-/run/omarchy-install/install.env
+ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase create_factory_snapshot
+# The keyring join is bounded by that unit's own 60 s; the snapshot itself
+# is CoW-instant. Ten minutes is a stuck guard.
+TimeoutStartSec=600

@@ -159,6 +159,18 @@ boot_validation_unit() {
 }
 check "boot validation is wired as a unit" boot_validation_unit
 
+# The factory snapshot: last in the chain, also ordered after the keyring
+# unit it joins.
+factory_snapshot_unit() {
+  local unit="$UNITS/omarchy-install-factory-snapshot.service"
+  grep -qxF 'PartOf=omarchy-install.target' "$unit" &&
+  grep -qxF 'After=omarchy-install-validate-boot.service omarchy-target-keyring.service' "$unit" &&
+  grep -qxF 'ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase create_factory_snapshot' "$unit" &&
+  grep -qxF 'EnvironmentFile=-/run/omarchy-install/install.env' "$unit" &&
+  grep -qF "add_phase 'Creating factory snapshot' create_factory_snapshot_unit" "$ORCH/main.sh"
+}
+check "the factory snapshot is wired as a unit" factory_snapshot_unit
+
 # run-phase itself: sourceable main.sh, dispatch, refusals — including the
 # destruction boundary, which must fail loudly rather than skip.
 check "sourcing main.sh defines but does not run the install" \
