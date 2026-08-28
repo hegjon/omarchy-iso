@@ -90,6 +90,13 @@ prepare_live() {
   arch_load_config
 }
 
+# The phase as its systemd unit (PartOf=omarchy-install.target); the
+# function above is what run-phase hosts in the unit's own process,
+# with the pre-format opt-out — no target exists yet.
+prepare_live_unit() {
+  run_phase_unit omarchy-install-prepare-live.service 'live preparation'
+}
+
 # _install_disk(): the device being wiped, or nothing for pre_mounted /
 # no-wipe configs.
 install_disk() {

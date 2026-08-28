@@ -1,0 +1,16 @@
+[Unit]
+Description=Prepare the live environment for the install
+# First phase, pre-format by definition: clean up holders on the disk about
+# to be wiped and load the configurator output. Runs before any target
+# exists, so it carries the run-phase pre-format opt-out.
+PartOf=omarchy-install.target
+
+[Service]
+Type=oneshot
+Environment=RUN_PHASE_NO_TARGET=1
+EnvironmentFile=/usr/share/omarchy-iso/orchestrator/context.env
+EnvironmentFile=-/run/omarchy-install/context.env
+EnvironmentFile=-/run/omarchy-install/install.env
+ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase prepare_live
+# Holder cleanup and a config parse; ten minutes is a stuck guard.
+TimeoutStartSec=600

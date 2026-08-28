@@ -171,6 +171,16 @@ factory_snapshot_unit() {
 }
 check "the factory snapshot is wired as a unit" factory_snapshot_unit
 
+# The pre-format phases carry the opt-out instead of the mountpoint guard.
+prepare_live_unit_wired() {
+  local unit="$UNITS/omarchy-install-prepare-live.service"
+  grep -qxF 'PartOf=omarchy-install.target' "$unit" &&
+  grep -qxF 'Environment=RUN_PHASE_NO_TARGET=1' "$unit" &&
+  grep -qxF 'ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase prepare_live' "$unit" &&
+  grep -qF "add_phase 'Preparing live environment' prepare_live_unit" "$ORCH/main.sh"
+}
+check "live preparation is wired as a pre-format unit" prepare_live_unit_wired
+
 # run-phase itself: sourceable main.sh, dispatch, refusals — including the
 # destruction boundary, which must fail loudly rather than skip.
 check "sourcing main.sh defines but does not run the install" \

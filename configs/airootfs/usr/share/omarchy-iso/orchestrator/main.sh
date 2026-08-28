@@ -45,7 +45,7 @@ unset _module
 # create/mount the layout, while protected provides an already-mounted target
 # and the partition details Omarchy needs for boot/fstab generation.
 build_phases() {
-  add_phase 'Preparing live environment' prepare_live
+  add_phase 'Preparing live environment' prepare_live_unit
   add_phase 'Preparing install target' prepare_install_target
   add_phase 'Installing Arch + Omarchy' arch_install_system
   add_phase 'Configuring hibernation' configure_hibernation_unit
