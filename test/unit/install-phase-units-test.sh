@@ -66,6 +66,22 @@ done
 check "the phase loop runs hibernation via its unit" \
   grep -qF "add_phase 'Configuring hibernation' configure_hibernation_unit" "$ORCH/main.sh"
 
+# Third: the system finalizer, ordered after hibernation.
+check "the system unit is part of the target" \
+  grep -qxF 'PartOf=omarchy-install.target' "$UNITS/omarchy-install-system.service"
+check "it is ordered after the hibernation unit" \
+  grep -qxF 'After=omarchy-install-hibernation.service' "$UNITS/omarchy-install-system.service"
+check "it runs its phase through run-phase" \
+  grep -qxF 'ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase run_system_finalizer' \
+    "$UNITS/omarchy-install-system.service"
+for env in '/usr/share/omarchy-iso/orchestrator/context.env' \
+           '-/run/omarchy-install/context.env' '-/run/omarchy-install/install.env'; do
+  check "system unit reads $env" \
+    grep -qxF "EnvironmentFile=$env" "$UNITS/omarchy-install-system.service"
+done
+check "the phase loop runs the system finalizer via its unit" \
+  grep -qF "add_phase 'Configuring system' run_system_finalizer_unit" "$ORCH/main.sh"
+
 check "run-phase is executable in the ISO" \
   grep -qF '["/usr/share/omarchy-iso/orchestrator/run-phase"]="0:0:755"' "$ROOT/configs/profiledef.sh"
 # The sourced-main check needs the library reachable the way run-phase finds

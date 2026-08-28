@@ -193,6 +193,12 @@ run_system_finalizer() {
   unmask_mkinitcpio_pacman_hooks "$CTX_TARGET" "${TARGET_DEFERRED_BOOT_HOOKS[@]}"
 }
 
+# The phase as its systemd unit (PartOf=omarchy-install.target); the
+# function above is what run-phase hosts in the unit's own process.
+run_system_finalizer_unit() {
+  run_phase_unit omarchy-install-system.service 'system configuration'
+}
+
 run_chroot_finalizer() {
   if [[ $CTX_DEFER_PROVISIONING == true ]]; then
     info '› deferred-provisioning install: user finalization deferred to first boot'

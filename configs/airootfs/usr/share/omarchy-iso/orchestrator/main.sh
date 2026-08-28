@@ -49,7 +49,7 @@ build_phases() {
   add_phase 'Preparing install target' prepare_install_target
   add_phase 'Installing Arch + Omarchy' arch_install_system
   add_phase 'Configuring hibernation' configure_hibernation_unit
-  add_phase 'Configuring system' run_system_finalizer
+  add_phase 'Configuring system' run_system_finalizer_unit
   # Before finalize_limine_boot: the deferred-provisioning cryptkey drop-in
   # and keyfile must be in place for the final UKI build.
   add_phase 'Staging provisioning' stage_provisioning_state

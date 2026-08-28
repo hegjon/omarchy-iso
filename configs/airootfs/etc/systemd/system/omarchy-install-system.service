@@ -1,0 +1,17 @@
+[Unit]
+Description=Apply the Omarchy system configuration to the install target
+# Third migrated phase: omarchy-apply-system in the target's chroot, with the
+# boot-image pacman hooks masked around it (the mask lives on the target's
+# disk, and the orchestrator's exit trap unmasks by name whatever happens to
+# this process — the failure contract is process-independent by design).
+PartOf=omarchy-install.target
+After=omarchy-install-hibernation.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/usr/share/omarchy-iso/orchestrator/context.env
+EnvironmentFile=-/run/omarchy-install/context.env
+EnvironmentFile=-/run/omarchy-install/install.env
+ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase run_system_finalizer
+# 12.5 s on a Core2; fifteen minutes is a stuck-chroot guard, not a budget.
+TimeoutStartSec=900
