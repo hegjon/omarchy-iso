@@ -26,20 +26,28 @@ debug() {
   return 0
 }
 
-info() {
-  _log_write INFO "$*"
-  printf '%s\n' "$*"
-}
+# info and error belong to whoever embeds the library: Omarchy's orchestrator
+# defines its own before this file loads (its dashboard owns their shape and
+# captures stdout into its install log). The versions here are the standalone
+# fallback, defined only when nobody got there first.
+if ! declare -F info >/dev/null; then
+  info() {
+    _log_write INFO "$*"
+    printf '%s\n' "$*"
+  }
+fi
 
 warn() {
   _log_write WARNING "$*"
   printf 'warning: %s\n' "$*" >&2
 }
 
-error() {
-  _log_write ERROR "$*"
-  printf 'error: %s\n' "$*" >&2
-}
+if ! declare -F error >/dev/null; then
+  error() {
+    _log_write ERROR "$*"
+    printf 'error: %s\n' "$*" >&2
+  }
+fi
 
 # Fatal error. archinstall raises an exception here; the bash equivalent is to
 # exit. A sourcing orchestrator that wants to survive a failed step should run

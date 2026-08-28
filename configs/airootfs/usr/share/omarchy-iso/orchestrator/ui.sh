@@ -42,9 +42,10 @@ optional_path() {
   return 0
 }
 
-# Membership test for space-separated lists: list_contains "a b c" b
-# (the same helper archinstall-bash defines; the phases must not depend on
-# the library being loaded for it).
+# Membership test for space-separated lists: list_contains "a b c" b — the
+# canonical definition under the orchestrator (archinstall-bash defers to an
+# existing one via its define-if-missing guard), and the phases must not
+# depend on the library being loaded for it.
 list_contains() {
   local needle=$2 item
   for item in $1; do

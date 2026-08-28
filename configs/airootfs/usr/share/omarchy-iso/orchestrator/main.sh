@@ -17,9 +17,12 @@ set -eEuo pipefail
 
 ORCHESTRATOR_DIR=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 
-# The library first, the orchestrator's modules after it: both define info,
-# error and list_contains, and the orchestrator's versions (ui.sh) must be the
-# ones in effect — the dashboard log relies on their shape.
+# ui.sh before the library, structurally: the orchestrator's info, error and
+# list_contains must be the definitions in effect (the dashboard log relies
+# on their shape), and the library defines its own only when none exist —
+# so precedence is a define-if-missing contract, not source-order luck.
+# shellcheck disable=SC1090
+source "$ORCHESTRATOR_DIR/ui.sh"
 OMARCHY_ARCHINSTALL_LIB=${OMARCHY_ARCHINSTALL_LIB:-/usr/share/archinstall-bash/lib}
 if [[ ! -f $OMARCHY_ARCHINSTALL_LIB/archinstall.sh ]]; then
   printf 'error: archinstall-bash missing at %s\n' "$OMARCHY_ARCHINSTALL_LIB" >&2
@@ -27,7 +30,7 @@ if [[ ! -f $OMARCHY_ARCHINSTALL_LIB/archinstall.sh ]]; then
 fi
 # shellcheck disable=SC1091
 source "$OMARCHY_ARCHINSTALL_LIB/archinstall.sh"
-for _module in ui context phases archinstall root_image install limine target_setup provisioning lifecycle; do
+for _module in context phases archinstall root_image install limine target_setup provisioning lifecycle; do
   # shellcheck disable=SC1090
   source "$ORCHESTRATOR_DIR/$_module.sh"
 done

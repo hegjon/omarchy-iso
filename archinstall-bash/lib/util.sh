@@ -65,13 +65,17 @@ password_hash() {
 }
 
 # Membership test for space-separated lists: list_contains "a b c" b
-list_contains() {
-  local needle=$2 item
-  for item in $1; do
-    [[ $item == "$needle" ]] && return 0
-  done
-  return 1
-}
+# Defined only when the embedder has not already provided it (the same
+# define-if-missing contract as info/error in log.sh).
+if ! declare -F list_contains >/dev/null; then
+  list_contains() {
+    local needle=$2 item
+    for item in $1; do
+      [[ $item == "$needle" ]] && return 0
+    done
+    return 1
+  }
+fi
 
 # Path('/mnt/x').relative_to(anchor) → 'mnt/x'
 relative_path() {
