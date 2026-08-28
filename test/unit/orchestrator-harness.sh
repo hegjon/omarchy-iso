@@ -15,6 +15,17 @@ for _m in ui context phases archinstall root_image install limine target_setup p
 done
 unset _m
 
+# The system-touching commands each test shadows are its own business, but
+# systemd must be shadowed for every test unconditionally: the orchestrator's
+# exit paths run `systemctl stop` on install-medium units, and on a
+# developer's host that is not a no-op -- a non-root systemctl raises a
+# polkit password prompt on the desktop for a unit that does not even exist
+# there, swallowed by the callers' `|| true` so the suite stays green while
+# it rings. Tests that need behavior redefine these per test as usual.
+systemctl() { :; }
+journalctl() { :; }
+systemd-escape() { command systemd-escape "$@"; }
+
 failures=0
 section() { printf '==> %s\n' "$*"; }
 # The assertion runs as a plain statement, not as an `if` condition: a
