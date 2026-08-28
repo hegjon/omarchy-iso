@@ -37,19 +37,6 @@ MIRROR_VERIFY_UNIT=omarchy-mirror-verify.service
 # handlers' sets, and zram-generator.
 INSTALLER_STRAP_ONLY_MISSING=1
 
-root_image_stream() {
-  if [[ ! -f $ROOT_IMAGE_STREAM ]]; then
-    # The archiso hook unmounts the boot medium after copying the airootfs
-    # to RAM (copytoram). The boot entries pin copytoram=n, so this only
-    # happens when someone edits the kernel command line.
-    if [[ ! -d $BOOT_MEDIUM_MOUNT ]]; then
-      fail "boot medium is not mounted at $BOOT_MEDIUM_MOUNT: the live system was copied to RAM (copytoram) and the medium released; boot with copytoram=n"
-    fi
-    fail "root image stream missing: $ROOT_IMAGE_STREAM"
-  fi
-  printf '%s' "$ROOT_IMAGE_STREAM"
-}
-
 root_image_required_packages() {
   printf '%s\n' "${ROOT_IMAGE_REQUIRED_PACKAGES[@]}"
   omarchy_runtime_package
@@ -104,6 +91,20 @@ run_verify_helper() {
 }
 
 verify_root_image_stream() {
+  # The earliest the installer can know the medium is gone -- checked here in
+  # the pre-flight gate, before anything formats the disk, not at unpack
+  # time when the disk is already wiped. A missing stream would also fail
+  # the verify unit's condition below, but with a verdict that cannot name
+  # the one cause a user can act on: the archiso hook unmounts the boot
+  # medium after copying the airootfs to RAM (copytoram). The boot entries
+  # pin copytoram=n, so that only happens when someone edits the kernel
+  # command line. First the mount, then the stream on it.
+  if ! mountpoint -q "$BOOT_MEDIUM_MOUNT"; then
+    fail "boot medium is not mounted at $BOOT_MEDIUM_MOUNT: the live system was copied to RAM (copytoram) and the medium released; boot with copytoram=n"
+  fi
+  if [[ ! -f $ROOT_IMAGE_STREAM ]]; then
+    fail "root image stream missing: $ROOT_IMAGE_STREAM"
+  fi
   publish_verify_progress
   run_verify_helper "$ROOT_IMAGE_VERIFY_UNIT" "the root image" "$ROOT_IMAGE_STREAM"
 }
@@ -224,8 +225,9 @@ umount_tree() {
 }
 
 install_root_image() {
-  local stream target=$CTX_TARGET
-  stream=$(root_image_stream)
+  # The stream's existence and checksum were proven by the pre-flight gate
+  # (verify_root_image_stream), before the disk was touched.
+  local stream=$ROOT_IMAGE_STREAM target=$CTX_TARGET
   root_image_target_mounts
 
   local top="$CTX_STATE_DIR/image-top"
