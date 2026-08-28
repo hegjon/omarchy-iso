@@ -120,6 +120,13 @@ prepare_install_target() {
   verify_offline_mirror
 }
 
+# The phase as its systemd unit (PartOf=omarchy-install.target); the
+# function above is what run-phase hosts in the unit's own process,
+# with the pre-format opt-out — the gate runs before formatting.
+prepare_install_target_unit() {
+  run_phase_unit omarchy-install-prepare-target.service 'pre-flight gate'
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # arch_install_system: archinstall-bash partitions and mounts per the
 # configurator JSON, the root image is unpacked onto the mounted layout, and

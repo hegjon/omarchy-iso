@@ -181,6 +181,17 @@ prepare_live_unit_wired() {
 }
 check "live preparation is wired as a pre-format unit" prepare_live_unit_wired
 
+prepare_target_unit_wired() {
+  local unit="$UNITS/omarchy-install-prepare-target.service"
+  grep -qxF 'PartOf=omarchy-install.target' "$unit" &&
+  grep -qxF 'After=omarchy-install-prepare-live.service' "$unit" &&
+  grep -qxF 'Environment=RUN_PHASE_NO_TARGET=1' "$unit" &&
+  grep -qxF 'TimeoutStartSec=infinity' "$unit" &&
+  grep -qxF 'ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase prepare_install_target' "$unit" &&
+  grep -qF "add_phase 'Preparing install target' prepare_install_target_unit" "$ORCH/main.sh"
+}
+check "the pre-flight gate is wired as a pre-format unit" prepare_target_unit_wired
+
 # run-phase itself: sourceable main.sh, dispatch, refusals — including the
 # destruction boundary, which must fail loudly rather than skip.
 check "sourcing main.sh defines but does not run the install" \
