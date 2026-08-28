@@ -32,7 +32,7 @@ guided_perform_installation() {
 
   [[ $CFG_HAS_MIRROR_CONFIG == true ]] && installer_set_mirrors on_target
 
-  [[ $CFG_SWAP_ENABLED == true ]] && installer_setup_swap "$CFG_SWAP_ALGO"
+  [[ $CFG_SWAP_ENABLED == true ]] && installer_setup_swap
 
   if [[ -n $CFG_BOOTLOADER && $CFG_BOOTLOADER != no_bootloader ]]; then
     warn "bootloader $CFG_BOOTLOADER requested but this port installs no bootloader; the caller must (Omarchy's orchestrator installs Limine itself)"

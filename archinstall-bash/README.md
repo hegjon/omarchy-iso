@@ -74,8 +74,9 @@ the Omarchy ISO.
 
 Omarchy-specific conveniences that upstream lacks:
 
-* `INSTALLER_STRAP_ONLY_MISSING=1` makes `pacman_strap` install only packages
-  the target does not already hold (the adapter's `install_base_delta`).
+* `pacman_strap` installs only packages the target does not already hold —
+  on a target unpacked from the root image, that is the whole point; on an
+  empty target the filter passes everything through.
 * `target_has_package <target> <name>` (the adapter's helper of the same name).
 * `installer_set_keyboard_language` writes the keymap with `systemd-firstboot`
   instead of booting the target in a container.

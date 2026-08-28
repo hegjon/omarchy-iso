@@ -32,11 +32,6 @@ ROOT_IMAGE_REQUIRED_PACKAGES=(limine omarchy-keyring)
 ROOT_IMAGE_VERIFY_UNIT=omarchy-root-image-verify.service
 MIRROR_VERIFY_UNIT=omarchy-mirror-verify.service
 
-# library installs only what the target lacks (the kernel and the microcode,
-# mostly) — including minimal installation's base list, the application
-# handlers' sets, and zram-generator.
-INSTALLER_STRAP_ONLY_MISSING=1
-
 root_image_required_packages() {
   printf '%s\n' "${ROOT_IMAGE_REQUIRED_PACKAGES[@]}"
   omarchy_runtime_package

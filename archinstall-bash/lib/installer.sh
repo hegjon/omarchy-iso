@@ -281,11 +281,12 @@ installer_mkinitcpio() {
 
 # Installer.setup_swap(): swap on zram.
 installer_setup_swap() {
-  local algo=${1:-zstd}
   info 'Setting up swap on zram'
   pacman_strap zram-generator
-  info "Zram compression algorithm: $algo"
-  printf '[zram0]\ncompression-algorithm = %s\n' "$algo" >"$INST_TARGET/etc/systemd/zram-generator.conf"
+  # No /etc/systemd/zram-generator.conf is written: omarchy-settings ships
+  # the tuning as a vendor drop-in (zram-generator.conf.d/90-omarchy.conf)
+  # that outranks the main file, so a generic /etc copy would decide nothing
+  # and only imply /etc is where zram gets configured.
   installer_enable_service systemd-zram-setup@zram0.service
   INST_ZRAM_ENABLED=1
 }

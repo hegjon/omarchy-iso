@@ -14,7 +14,7 @@ CONFIG_JSON='{}'
 # Plain settings (ArchConfig fields)
 CFG_HOSTNAME='' CFG_TIMEZONE='UTC' CFG_NTP=true
 CFG_KERNELS=() CFG_PACKAGES=() CFG_SERVICES=() CFG_CUSTOM_COMMANDS=()
-CFG_SWAP_ENABLED=false CFG_SWAP_ALGO=zstd
+CFG_SWAP_ENABLED=false
 CFG_HAS_PACMAN_CONFIG=false CFG_PARALLEL_DOWNLOADS=5 CFG_PACMAN_COLOR=true
 CFG_LOCALE_KB='' CFG_LOCALE_LANG=en_US.UTF-8 CFG_LOCALE_ENC=UTF-8 CFG_LOCALE_FONT=default8x16
 CFG_HAS_MIRROR_CONFIG=false
@@ -98,13 +98,11 @@ config_parse() {
     CFG_PARALLEL_DOWNLOADS=$(cfg '.parallel_downloads')
   fi
 
-  # ZramConfiguration.parse_arg: bool or {enabled, algorithm}
+  # ZramConfiguration.parse_arg: bool or {enabled}. A configured algorithm is
+  # ignored: zram tuning is the vendor drop-in's business (installer_setup_swap).
   case $(cfg '.swap | type') in
     boolean) CFG_SWAP_ENABLED=$(cfg '.swap') ;;
-    object)
-      CFG_SWAP_ENABLED=$(cfg 'if .swap | has("enabled") then .swap.enabled else true end')
-      CFG_SWAP_ALGO=$(cfg '.swap.algorithm // .swap.algo // "zstd"')
-      ;;
+    object) CFG_SWAP_ENABLED=$(cfg 'if .swap | has("enabled") then .swap.enabled else true end') ;;
   esac
 
   # MirrorConfiguration

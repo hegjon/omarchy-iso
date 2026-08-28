@@ -147,8 +147,9 @@ arch_install_system() {
   mask_mkinitcpio_pacman_hooks / "${DEFERRED_BOOT_HOOKS[@]}"
 
   info '› installing per-machine packages (mkinitcpio deferred to final Limine UKI build)'
-  # With INSTALLER_STRAP_ONLY_MISSING the base strap reduces to the packages
-  # the image does not carry (the kernel and the CPU microcode); hostname,
+  # The base strap reduces to the packages the image does not carry (the
+  # kernel and the CPU microcode — the library straps only what the target
+  # lacks); hostname,
   # locale and the console keymap (written with systemd-firstboot, never
   # booting the target) are part of minimal installation as before.
   installer_minimal_installation --no-mkinitcpio
@@ -158,8 +159,7 @@ arch_install_system() {
   fi
 
   if [[ $CFG_SWAP_ENABLED == true ]]; then
-    installer_setup_swap "$CFG_SWAP_ALGO"
-    drop_archinstall_zram_conf
+    installer_setup_swap
   fi
 
   configure_limine_boot
@@ -207,17 +207,6 @@ arch_install_system() {
   fi
 
   installer_finish
-}
-
-# Remove the zram-generator.conf archinstall's setup_swap writes directly.
-#
-# omarchy-settings ships the tuning as a vendor drop-in at
-# /usr/lib/systemd/zram-generator.conf.d/90-omarchy.conf, which outranks the
-# main config file. setup_swap's generic /etc copy decides nothing and only
-# implies /etc is where zram gets configured, so drop it — we still want the
-# zram-generator package and service that setup_swap installs.
-drop_archinstall_zram_conf() {
-  rm -f "$CTX_TARGET/etc/systemd/zram-generator.conf"
 }
 
 # Let pacstrap consume bundled packages without copying them first.

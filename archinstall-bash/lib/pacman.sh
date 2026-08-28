@@ -7,7 +7,6 @@ PACMAN_OPTIONAL_REPOS=()
 # Set to 1 to strap only packages the target does not already hold
 # (what Omarchy's root-image install needs; pacstrap --needed still has to
 # resolve every target otherwise).
-INSTALLER_STRAP_ONLY_MISSING=${INSTALLER_STRAP_ONLY_MISSING:-0}
 
 # Pacman.run(): wait for a foreign pacman to release the db lock first.
 pacman_run() {
@@ -57,14 +56,15 @@ pacman_strap() {
   local -a packages=("$@") missing=()
   ((${#packages[@]})) || return 0
   pacman_sync
-  if ((INSTALLER_STRAP_ONLY_MISSING)); then
-    local p
-    for p in "${packages[@]}"; do
-      target_has_package "$INST_TARGET" "$p" || missing+=("$p")
-    done
-    packages=("${missing[@]}")
-    ((${#packages[@]})) || { debug 'all packages already present in target'; return 0; }
-  fi
+  # Only what the target lacks is strapped: on Omarchy the target starts as
+  # a full root image and pacstrap must not touch what the image provided;
+  # on an empty target everything is missing and this filters nothing.
+  local p
+  for p in "${packages[@]}"; do
+    target_has_package "$INST_TARGET" "$p" || missing+=("$p")
+  done
+  packages=("${missing[@]}")
+  ((${#packages[@]})) || { debug 'all packages already present in target'; return 0; }
   info "Installing packages: ${packages[*]}"
   sys_cmd_peek pacstrap -C "$PACMAN_CONF" -K "$INST_TARGET" "${packages[@]}" --noconfirm --needed ||
     die 'Pacstrap failed. See /var/log/archinstall/install.log or above message for error details'
