@@ -16,4 +16,14 @@ declare -F "$phase" >/dev/null ||
   fail "run-phase: no such phase function: $phase"
 
 ctx_from_env
+
+# The library's view of the configuration, so any phase function is hostable
+# here — the later phases read CFG_* and the PART_* planning the config parse
+# produces. Reloading per process is the established pattern, not a new one:
+# the orchestrator itself calls arch_load_config once at pre-flight and again
+# at the install phase, because config_load is deterministic from the JSON
+# ctx_from_env resolved. installer_init only seeds this process's INST_ state.
+arch_init_library
+arch_load_config
+
 "$phase"

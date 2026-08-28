@@ -92,6 +92,24 @@ check "sourcing main.sh defines but does not run the install" \
 check "run-phase refuses an unknown phase" \
   bash -c "! env OMARCHY_ARCHINSTALL_LIB='$ROOT/archinstall-bash/lib' '$ORCH/run-phase' no_such_phase 2>/dev/null"
 
+# The full hosting path, with the library config loaded: fixture inputs in,
+# context and CFG_* rebuilt, a harmless function dispatched. This is the
+# contract every migrated phase rides on.
+fixtures=$(mktemp -d)
+trap 'rm -rf "$fixtures"' EXIT
+cat >"$fixtures/config.json" <<'JSON'
+{"disk_config": {"config_type": "default_layout", "device_modifications": []},
+ "bootloader_config": {"bootloader": "limine"}, "hostname": "phase-smoke",
+ "omarchy_install": {"mode": "full_disk", "target_mount": "/mnt"}}
+JSON
+printf '{"users": [{"username": "smoke", "!password": "x"}]}\n' >"$fixtures/creds.json"
+check "run-phase rebuilds context and library config, then dispatches" \
+  bash -c "env OMARCHY_INSTALL_CONFIG='$fixtures/config.json' OMARCHY_INSTALL_CREDS='$fixtures/creds.json' \
+      OMARCHY_INSTALL_STATE_DIR='$fixtures/state' OMARCHY_ARCHINSTALL_LIB='$ROOT/archinstall-bash/lib' \
+      '$ORCH/run-phase' config_summary 2>/dev/null | grep -q 'phase-smoke'"
+check "and persisted the env files a phase unit would read" \
+  bash -c "test -f '$fixtures/state/context.env' && test -f '$fixtures/state/install.env'"
+
 if (( failures > 0 )); then
   printf '%d check(s) failed\n' "$failures" >&2
   exit 1
