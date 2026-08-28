@@ -189,6 +189,29 @@ check "run-phase refuses a phase before the disk phase mounted the target" \
   bash -c "$(declare -f run_phase_env); fixtures='$fixtures'; ROOT='$ROOT'
     run_phase_env '$ORCH/run-phase' config_summary 2>&1 | grep -q 'not a mounted install target'"
 
+# run-phase's failure-path mount cleanup: the hosted phase registers stage
+# mounts in a per-process array, so the entrypoint must unmount them itself
+# when the phase dies — and must not touch them on a clean exit, where the
+# phase already unmounted its own.
+cleanup_trap_mechanics() {
+  local d
+  d=$(mktemp -d) || return 1
+  sed -n '/^run_phase_cleanup() {/,/^}/p' "$ORCH/run-phase" >"$d/fn.sh"
+  UNMOUNT_LOG="$d/log" bash -c '
+    umount() { echo "UNMOUNTED:$1" >>"$UNMOUNT_LOG"; }
+    source "'"$d"'/fn.sh"
+    CTX_BIND_MOUNTS=(/stage/a /stage/b)
+    (exit 7); run_phase_cleanup
+    CTX_BIND_MOUNTS=(/stage/c)
+    (exit 0); run_phase_cleanup
+  '
+  local got
+  got=$(cat "$d/log" 2>/dev/null)
+  rm -rf "$d"
+  [[ $got == $'UNMOUNTED:/stage/a\nUNMOUNTED:/stage/b' ]]
+}
+check "run-phase unmounts the phase's stage mounts on a failing exit only" cleanup_trap_mechanics
+
 # The property the deferred-encrypted flavor of that phase depends on: the
 # generated LUKS passphrase is generated once and reused by every later
 # context rebuild — two separate processes must agree on it.
