@@ -17,6 +17,10 @@ Description=Verify the Omarchy install payload on the install medium
 # This is the only verifier: the orchestrator's prepare_install_target phase
 # collects the verdict, waits for the unit if it is still running, and fails
 # the install if it could not run.
+# Order after the boot medium's mount: the conditions below are evaluated at
+# start, and without this a not-yet-mounted medium would skip the unit
+# silently instead of waiting -- the gate would then say "will not run".
+RequiresMountsFor=/run/archiso/bootmnt
 ConditionPathExists=/run/archiso/bootmnt/arch/x86_64/omarchy-root.btrfs
 ConditionPathExists=/run/archiso/bootmnt/arch/x86_64/omarchy-root.btrfs.sha256
 

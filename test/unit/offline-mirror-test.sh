@@ -82,6 +82,9 @@ check "the mirror ships no checksum file of its own" \
 check "the verify unit checks it whole, with nothing to filter" \
   grep -qxF 'ExecStart=/usr/bin/sha256sum --check --strict omarchy-root.btrfs.sha256' \
     "$ROOT/configs/airootfs/etc/systemd/system/omarchy-root-image-verify.service"
+check "the root image verify waits for the boot medium to be mounted" \
+  grep -qxF 'RequiresMountsFor=/run/archiso/bootmnt' \
+    "$ROOT/configs/airootfs/etc/systemd/system/omarchy-root-image-verify.service"
 check "its timeout is sized on the stream" \
   grep -qF 'payload_bytes=$(stat -c %s "$root_image_stream")' "$BUILD_ISO"
 # The mirror is verified whole, before anything formats the disk.
