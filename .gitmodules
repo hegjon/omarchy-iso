@@ -2,6 +2,3 @@
   path = archiso
   url = https://gitlab.archlinux.org/archlinux/archiso.git
   branch = main
-[submodule "archinstall-bash"]
-  path = archinstall-bash
-  url = https://github.com/hegjon/archinstall-bash.git
