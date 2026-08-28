@@ -1,0 +1,18 @@
+[Unit]
+Description=Configure hibernation on the install target
+# Second migrated phase: omarchy-hibernation-setup in the target's chroot,
+# hosted by run-phase. After= the image unit is the graph accreting: the
+# orchestrator still serializes the phases, and the edge documents the order
+# the eventual all-units install will enforce by itself.
+PartOf=omarchy-install.target
+After=omarchy-install-image.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/usr/share/omarchy-iso/orchestrator/context.env
+EnvironmentFile=-/run/omarchy-install/context.env
+EnvironmentFile=-/run/omarchy-install/install.env
+ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase configure_hibernation
+# Swapfile creation on btrfs is fallocate-fast (0.8 s on a Core2); five
+# minutes is a stuck-chroot guard, not a budget.
+TimeoutStartSec=300

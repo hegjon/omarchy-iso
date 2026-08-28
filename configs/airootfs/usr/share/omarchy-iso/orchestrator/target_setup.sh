@@ -22,6 +22,12 @@ configure_hibernation() {
     /usr/bin/omarchy-hibernation-setup --force --no-rebuild
 }
 
+# The phase as its systemd unit (PartOf=omarchy-install.target); the
+# function above is what run-phase hosts in the unit's own process.
+configure_hibernation_unit() {
+  run_phase_unit omarchy-install-hibernation.service 'hibernation setup'
+}
+
 install_debug_enabled() {
   [[ ${OMARCHY_INSTALL_DEBUG:-} == 1 || -e /usr/share/omarchy-iso/install-debug ]]
 }

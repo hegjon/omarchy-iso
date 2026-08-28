@@ -48,6 +48,24 @@ done
 check "its timeout is sized on the stream at build" \
   grep -qF 'omarchy-install-image.service.d' "$ROOT/builder/build-iso.sh"
 
+# The second migrated phase: hibernation, ordered after the image — the edge
+# is inert while the orchestrator serializes, and is the graph the eventual
+# all-units install enforces by itself.
+check "the hibernation unit is part of the target" \
+  grep -qxF 'PartOf=omarchy-install.target' "$UNITS/omarchy-install-hibernation.service"
+check "it is ordered after the image unit" \
+  grep -qxF 'After=omarchy-install-image.service' "$UNITS/omarchy-install-hibernation.service"
+check "it runs its phase through run-phase" \
+  grep -qxF 'ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase configure_hibernation' \
+    "$UNITS/omarchy-install-hibernation.service"
+for env in '/usr/share/omarchy-iso/orchestrator/context.env' \
+           '-/run/omarchy-install/context.env' '-/run/omarchy-install/install.env'; do
+  check "hibernation unit reads $env" \
+    grep -qxF "EnvironmentFile=$env" "$UNITS/omarchy-install-hibernation.service"
+done
+check "the phase loop runs hibernation via its unit" \
+  grep -qF "add_phase 'Configuring hibernation' configure_hibernation_unit" "$ORCH/main.sh"
+
 check "run-phase is executable in the ISO" \
   grep -qF '["/usr/share/omarchy-iso/orchestrator/run-phase"]="0:0:755"' "$ROOT/configs/profiledef.sh"
 # The sourced-main check needs the library reachable the way run-phase finds
@@ -62,4 +80,4 @@ if (( failures > 0 )); then
   printf '%d check(s) failed\n' "$failures" >&2
   exit 1
 fi
-printf 'the install target and its first phase unit are wired\n'
+printf 'the install target and its phase units are wired\n'
