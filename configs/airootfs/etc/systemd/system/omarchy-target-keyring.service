@@ -1,0 +1,36 @@
+[Unit]
+Description=Initialise the install target's per-machine pacman keyring
+# The image ships no /etc/pacman.d/gnupg: a keyring baked into it would carry
+# the same master key on every install. The orchestrator starts this after
+# the last pacstrap (each runs its own --init on the dir, and --init is
+# idempotent) and joins it before the factory snapshot, which must not
+# capture the keyring half-written. The full story is with the start/join
+# code in orchestrator/root_image.sh.
+#
+# A unit rather than a plain child process because pacman-key leaves a
+# gpg-agent and dirmngr behind: systemd kills them with the rest of the
+# cgroup the moment the unit deactivates, where sockets under the target's
+# gnupg dir would otherwise block the unmount.
+
+[Service]
+Type=oneshot
+# Success is sticky, the verify units' technique: the unit's state alone then
+# answers every question the orchestrator has -- inactive never ran,
+# activating still running, active succeeded, failed failed -- so the join
+# keeps no state of its own.
+RemainAfterExit=yes
+# Where the target is mounted comes from the shared install context: the
+# defaults, then the values ctx_from_env resolved for this run (target_mount
+# and pre-mount configs move the target off /mnt). Later files win; the dash
+# tolerates a start before any context was written.
+EnvironmentFile=/usr/share/omarchy-iso/orchestrator/context.env
+EnvironmentFile=-/run/omarchy-install/context.env
+# oneshot units have no default start timeout, and the orchestrator joins
+# this one before the factory snapshot: a wedged pacman-key would otherwise
+# hang the install forever with nothing on screen. Key generation plus
+# populate is CPU-bound and takes seconds -- a minute is an order of
+# magnitude of headroom even for very old machines, and a timeout fails the
+# join with the journal's account instead of hanging it.
+TimeoutStartSec=60
+ExecStart=/usr/bin/pacman-key --gpgdir ${CTX_TARGET}/etc/pacman.d/gnupg --init
+ExecStart=/usr/bin/pacman-key --gpgdir ${CTX_TARGET}/etc/pacman.d/gnupg --populate-from ${CTX_TARGET}/usr/share/pacman/keyrings --populate archlinux omarchy

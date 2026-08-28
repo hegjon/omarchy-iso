@@ -330,43 +330,49 @@ receive_root_image() {
 # the target's gnupg dir would otherwise block the unmount); the dashboard's
 # process-group kill does not reach it, while `systemctl stop` still does
 # (stop_target_keyring_init); and its output is in the journal whatever
-# happens to the orchestrator. --wait --pipe give a child to join with the
-# unit's exit status and output.
+# happens to the orchestrator.
+#
+# The unit is shipped, omarchy-target-keyring.service, and reads the target
+# path from the install context env files (the defaults beside this script,
+# overlaid by the runtime context ctx_from_env writes) -- the commands live
+# in the unit file with the other install-medium units. systemd is also the
+# whole process tracker: start --no-block hands the work over, and with the
+# unit's RemainAfterExit=yes its state alone answers the join -- inactive
+# never ran, activating still running, active succeeded, failed failed --
+# the same technique the verify units use. Nothing is tracked here.
 
-TARGET_KEYRING_UNIT=omarchy-target-keyring
-TARGET_KEYRING_PID=''
+TARGET_KEYRING_UNIT=omarchy-target-keyring.service
 
 start_target_keyring_init() {
-  local gpgdir="$CTX_TARGET/etc/pacman.d/gnupg" keyrings="$CTX_TARGET/usr/share/pacman/keyrings"
   info '› initializing per-machine pacman keyring (background unit)'
-  # A failed unit from an earlier attempt would hold the name (--collect
-  # releases it, but not for a unit started without it).
-  systemctl reset-failed "$TARGET_KEYRING_UNIT" >/dev/null 2>&1 || true
-  systemd-run --wait --pipe --collect --quiet "--unit=$TARGET_KEYRING_UNIT" \
-    sh -c "pacman-key --gpgdir '$gpgdir' --init && pacman-key --gpgdir '$gpgdir' --populate-from '$keyrings' --populate archlinux omarchy" \
-    >"$CTX_STATE_DIR/target-keyring.out" 2>&1 &
-  TARGET_KEYRING_PID=$!
+  systemctl start --no-block "$TARGET_KEYRING_UNIT" ||
+    fail "could not start $TARGET_KEYRING_UNIT"
 }
 
-# Wait for the keyring unit if one is running; no-op otherwise. With
-# --no-raise the install's own error wins (the exit path).
+# Wait out the keyring unit and raise its failure; a unit that never ran is
+# the no-op. With --no-raise the install's own error wins (the exit path).
+# The poll is bounded by the unit's TimeoutStartSec; phases of install
+# separate it from the start, so the job is long past enqueued by the time
+# anyone joins.
 join_target_keyring_init() {
   local raise=true
   [[ ${1:-} == --no-raise ]] && raise=false
-  [[ -n $TARGET_KEYRING_PID ]] || return 0
-  local pid=$TARGET_KEYRING_PID rc=0
-  TARGET_KEYRING_PID=''
-  wait "$pid" || rc=$?
-  if ((rc != 0)) && [[ $raise == true ]]; then
-    fail "per-machine pacman keyring init failed (exit $rc): $(tr -d '\0' <"$CTX_STATE_DIR/target-keyring.out" 2>/dev/null)"
+  local state
+  while state=$(systemctl show -p ActiveState --value "$TARGET_KEYRING_UNIT" 2>/dev/null) &&
+        [[ $state == activating ]]; do
+    sleep 0.5
+  done
+  if [[ $state == failed && $raise == true ]]; then
+    # pacman-key's own words are in the journal; the unit has the how.
+    fail "per-machine pacman keyring init failed ($(systemctl show -p Result --value "$TARGET_KEYRING_UNIT" 2>/dev/null)): $(journalctl --no-pager -o cat -b -u "$TARGET_KEYRING_UNIT" 2>/dev/null | tail -n 5 | tr '\n' ' ')"
   fi
   return 0
 }
 
 # Exit path: end the keyring unit if it is still running, so nothing keeps
-# writing into the target after the install has stopped.
+# writing into the target after the install has stopped. `systemctl stop` is
+# synchronous -- when it returns, the unit's cgroup is gone -- and stopping
+# a unit that never ran is its own no-op.
 stop_target_keyring_init() {
-  [[ -n $TARGET_KEYRING_PID ]] || return 0
   systemctl stop "$TARGET_KEYRING_UNIT" >/dev/null 2>&1 || true
-  join_target_keyring_init --no-raise
 }

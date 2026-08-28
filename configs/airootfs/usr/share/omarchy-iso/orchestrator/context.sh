@@ -7,11 +7,11 @@ CTX_CONFIG_PATH='' CTX_CREDS_PATH='' CTX_FULL_NAME='' CTX_EMAIL='' CTX_ENCRYPT=f
 CTX_AUTHORIZED_KEYS_PATH='' CTX_TAILSCALE_AUTHKEY_PATH=''
 CTX_USER_CONFIGURATION='{}' CTX_USER_CREDENTIALS='{}' CTX_ARCH_CONFIG_PATH='' CTX_OMARCHY_INSTALL='{}'
 CTX_DEFER_PROVISIONING=false
-CTX_TARGET=/mnt
-CTX_OMARCHY_PATH=/usr/share/omarchy
-CTX_STATE_DIR=/run/omarchy-install
-CTX_LOG_PATH=/var/log/omarchy-install.log
 CTX_USERNAME='' CTX_MODE='' CTX_IS_PROTECTED=false
+# The path defaults live in context.env, which doubles as an EnvironmentFile=
+# for systemd units (see its header for the format rules + runtime layer).
+# shellcheck source=configs/airootfs/usr/share/omarchy-iso/orchestrator/context.env
+source "${BASH_SOURCE[0]%/*}/context.env"
 # Mutable per-run state shared across phases (ctx.state in Python).
 CTX_BIND_MOUNTS=()
 CTX_TARGET_SETUP_PREPARED=false
@@ -131,7 +131,23 @@ ctx_from_env() {
   fi
   CTX_IS_PROTECTED=false
   [[ $CTX_MODE == protected ]] && CTX_IS_PROTECTED=true
+
+  ctx_write_runtime_env
   return 0
+}
+
+# The resolved paths, for systemd units: context.env carries the defaults,
+# and a unit that needs the live values layers this file over it
+# (EnvironmentFile=-/run/omarchy-install/context.env -- later files win).
+# The same four keys as the defaults file, nothing else: the rest of the
+# context is process state, not configuration.
+ctx_write_runtime_env() {
+  cat >"$CTX_STATE_DIR/context.env" <<EOF
+CTX_TARGET='$CTX_TARGET'
+CTX_OMARCHY_PATH='$CTX_OMARCHY_PATH'
+CTX_STATE_DIR='$CTX_STATE_DIR'
+CTX_LOG_PATH='$CTX_LOG_PATH'
+EOF
 }
 
 # _strip_account_fields(): encryption material lives in
