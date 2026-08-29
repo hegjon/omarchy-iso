@@ -32,8 +32,8 @@ run_helper() { # loadstate, active_seq, start_rc, [result]  ->  sets RC and OUT
   local loadstate=$1 active_seq=$2 start_rc=$3 result=${4:-exit-code}
   local box; box=$(mktemp -d)
   mkdir -p "$box/bin" "$box/medium/arch/x86_64" "$box/sys/block/sdz/queue"
-  : >"$box/medium/arch/x86_64/omarchy-root.btrfs"
-  : >"$box/medium/arch/x86_64/omarchy-root.btrfs.sha256"
+  : >"$box/medium/arch/x86_64/omarchy-root.btrfs.zst"
+  : >"$box/medium/arch/x86_64/omarchy-root.btrfs.zst.sha256"
 
   # WITH_HASHER_PROC=1: a fake hasher (pid 4242) holds the stream at pos 512
   # of 1024 bytes, and the helper draws progress into $box/progress. The shim
@@ -41,9 +41,9 @@ run_helper() { # loadstate, active_seq, start_rc, [result]  ->  sets RC and OUT
   local mainpid=0
   if [[ -n ${WITH_HASHER_PROC:-} ]]; then
     mainpid=4242
-    head -c 1024 /dev/zero >"$box/medium/arch/x86_64/omarchy-root.btrfs"
+    head -c 1024 /dev/zero >"$box/medium/arch/x86_64/omarchy-root.btrfs.zst"
     mkdir -p "$box/proc/4242/fd" "$box/proc/4242/fdinfo"
-    ln -s "$box/medium/arch/x86_64/omarchy-root.btrfs" "$box/proc/4242/fd/7"
+    ln -s "$box/medium/arch/x86_64/omarchy-root.btrfs.zst" "$box/proc/4242/fd/7"
     printf 'pos:\t512\nflags:\t0100000\n' >"$box/proc/4242/fdinfo/7"
   fi
   echo "none mq-deadline kyber [bfq]" >"$box/sys/block/sdz/queue/scheduler"
@@ -59,7 +59,7 @@ echo sdz
 EOF
   cat >"$box/bin/journalctl" <<'EOF'
 #!/bin/bash
-echo "omarchy-root.btrfs: FAILED"
+echo "omarchy-root.btrfs.zst: FAILED"
 EOF
   # systemctl show -p LoadState|ActiveState --value ; systemctl start ...
   cat >"$box/bin/systemctl" <<EOF
@@ -101,7 +101,7 @@ EOF
   # the stream, so the sandbox passes what the orchestrator passes.
   OUT=$(PATH="$box/bin:$PATH" env "${progress_env[@]}" bash "$shim" \
     omarchy-root-image-verify.service "the root image" \
-    "$box/medium/arch/x86_64/omarchy-root.btrfs" 2>&1)
+    "$box/medium/arch/x86_64/omarchy-root.btrfs.zst" 2>&1)
   RC=$?
   set -e
   PROGRESS_OUT=$(cat "$box/progress" 2>/dev/null || true)

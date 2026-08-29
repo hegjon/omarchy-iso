@@ -72,9 +72,32 @@ findmnt() {
 run_phase root_image_target_mounts
 check 'non-@ root refused' test "$?" -ne 0
 
+section 'the receive pipeline'
+# Driven for real: the actual zstd decompresses the outer layer, only the
+# receive end is stubbed. What matters is the round trip and that a failure's
+# headline names the stage that broke the pipe.
+fresh_target
+printf 'extents and framing' >"$TMP/payload"
+zstd -q -15 --long=27 -o "$TMP/stream.zst" "$TMP/payload"
+btrfs() { cat >"$TMP/received"; }
+run_phase receive_root_image "$TMP/top" "$TMP/stream.zst"
+check 'a good stream receives' eq "$?" 0
+check 'decompressed bytes reach the receive end' eq "$(cat "$TMP/received")" 'extents and framing'
+
+printf 'not a zstd stream' >"$TMP/garbage.zst"
+btrfs() { cat >/dev/null; }
+run_phase receive_root_image "$TMP/top" "$TMP/garbage.zst"
+check 'a broken outer layer fails the phase' test "$?" -ne 0
+check 'and names the decompression stage' contains "$(cat "$ERR")" 'root image decompression failed'
+
+btrfs() { cat >/dev/null; return 1; }
+run_phase receive_root_image "$TMP/top" "$TMP/stream.zst"
+check 'a dying receive fails the phase' test "$?" -ne 0
+check 'and names the receive stage' contains "$(cat "$ERR")" 'btrfs receive failed'
+
 section 'the subvolume dance'
 fresh_target
-ROOT_IMAGE_STREAM="$TMP/omarchy-root.btrfs"
+ROOT_IMAGE_STREAM="$TMP/omarchy-root.btrfs.zst"
 printf 'stream-bytes' >"$ROOT_IMAGE_STREAM"
 findmnt() {
   jq -n --arg t "$CTX_TARGET" '{filesystems: [

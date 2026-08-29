@@ -1100,7 +1100,7 @@ if [[ $install_target == "free_space" ]]; then
     step "Verifying the install medium"
     if ! verify_error=$(OMARCHY_VERIFY_PROGRESS=/dev/tty omarchy-wait-verify \
       omarchy-root-image-verify.service "the root image" \
-      /run/archiso/bootmnt/arch/x86_64/omarchy-root.btrfs 2>&1 1>/dev/null); then
+      /run/archiso/bootmnt/arch/x86_64/omarchy-root.btrfs.zst 2>&1 1>/dev/null); then
       abort "$(head -1 <<<"$verify_error")"
     fi
     if ! verify_error=$(OMARCHY_VERIFY_PROGRESS=/dev/tty omarchy-wait-verify \

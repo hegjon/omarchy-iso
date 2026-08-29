@@ -102,7 +102,7 @@ assert_nbd_medium() {
   check "kernel cmdline pinned copytoram=n" \
     ssh_live_root "grep -q 'copytoram=n' /proc/cmdline"
   check "root image stream is reachable on the netboot medium" \
-    ssh_live_root "test -f /run/archiso/bootmnt/arch/x86_64/omarchy-root.btrfs"
+    ssh_live_root "test -f /run/archiso/bootmnt/arch/x86_64/omarchy-root.btrfs.zst"
   # The mirror is a directory on the same medium, bind-mounted over the path
   # pacman's [offline] repo points at. Over the wire that is an ISO9660 read over
   # NBD, which nothing else here exercises -- and an install that cannot

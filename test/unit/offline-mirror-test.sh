@@ -54,20 +54,20 @@ tar -czf "$payload/mirror/offline.db.tar.gz" -C "$db" linux-1.0-1 linux-firmware
 printf 'files\n' | gzip >"$payload/mirror/offline.files.tar.gz"
 # What the build recorded this medium as carrying.
 printf '%s\n' linux-1.0-1-x86_64.pkg.tar.zst linux-firmware-1.0-1-x86_64.pkg.tar.zst >"$payload/shipped"
-( cd "$payload" && printf 'root image\n' >omarchy-root.btrfs && sha256sum omarchy-root.btrfs >omarchy-root.btrfs.sha256 )
+( cd "$payload" && printf 'root image\n' >omarchy-root.btrfs.zst && sha256sum omarchy-root.btrfs.zst >omarchy-root.btrfs.zst.sha256 )
 
 VERIFIER="$ROOT/configs/airootfs/usr/local/bin/omarchy-verify-mirror"
 # Run from the mirror, the way the unit's WorkingDirectory does.
 verify() { ( cd "$payload/mirror" && OMARCHY_SHIPPED_LIST="$payload/shipped" bash "$VERIFIER" ); }
 # The unit's own command for the stream, run the way the unit runs it.
-boot_scope() { ( cd "$payload" && sha256sum --check --strict --quiet omarchy-root.btrfs.sha256 ); }
+boot_scope() { ( cd "$payload" && sha256sum --check --strict --quiet omarchy-root.btrfs.zst.sha256 ); }
 
 check "an intact mirror verifies" verify
 check "it says how many packages it checked" \
   bash -c "verify_out=\$(cd '$payload/mirror' && OMARCHY_SHIPPED_LIST='$payload/shipped' bash '$VERIFIER'); [[ \$verify_out == 'verified 2 packages against the repo database' ]]"
 check "the stream's own check passes" boot_scope
 check "it names only the file it checks" \
-  bash -c "(( \$(grep -c . '$payload/omarchy-root.btrfs.sha256') == 1 ))"
+  bash -c "(( \$(grep -c . '$payload/omarchy-root.btrfs.zst.sha256') == 1 ))"
 # Every way the medium can be wrong has to stop the install before it formats.
 check "a damaged package fails it" \
   bash -c "printf 'damaged\n' >'$payload/mirror/linux-1.0-1-x86_64.pkg.tar.zst';

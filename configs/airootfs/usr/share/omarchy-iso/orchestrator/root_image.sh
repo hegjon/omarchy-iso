@@ -13,7 +13,14 @@
 # rather than asking the installer to mount a second time, which would also
 # unlock LUKS a second time; the mapper stays open throughout.
 
-ROOT_IMAGE_STREAM=/run/archiso/bootmnt/arch/x86_64/omarchy-root.btrfs
+ROOT_IMAGE_STREAM=/run/archiso/bootmnt/arch/x86_64/omarchy-root.btrfs.zst
+# Decompresses the outer whole-stream zstd layer in the receive pipe (the
+# per-extent compression inside the stream cannot reach the send framing or
+# redundancy that spans extents; the outer pass is ~11% of the stream).
+# --long=27 mirrors the compressing side's window: it is within the decoder's
+# default acceptance limit, but saying it here keeps the pair visibly in step
+# with STREAM_COMPRESS in build-root-image.sh.
+ROOT_IMAGE_DECOMPRESS=(zstd -dc --long=27)
 ROOT_IMAGE_SUBVOLUME=omarchy-root
 BOOT_MEDIUM_MOUNT=/run/archiso/bootmnt
 
@@ -280,28 +287,53 @@ install_root_image() {
   systemd-machine-id-setup --root="$target" >/dev/null 2>&1 || fail "could not set the target's machine id"
 }
 
-# Pipe the stream into btrfs receive, publishing progress for the dashboard
-# as a fraction of stream bytes consumed — read straight off the receiver's
-# stdin fd position, the same way the verify phase watches the hasher.
+# Pipe the stream through the outer-layer decompressor into btrfs receive,
+# publishing progress for the dashboard as a fraction of stream bytes
+# consumed (compressed bytes — the fraction of the medium read, which is what
+# the wait is made of) — read straight off the decompressor's stdin fd
+# position, the same way the verify phase watches the hasher.
+#
+# The decompressor owns the read off the medium: a read error there is the
+# dying-medium case the verify machinery exists for, and it surfaces in $err
+# under its own stage name below, never as mystery receive noise. The pipe
+# between the children is what turns a receive that dies early into the
+# decompressor's EPIPE, so neither child can be left blocked on the other.
 receive_root_image() {
   local top=$1 stream=$2 total pos err="$CTX_STATE_DIR/btrfs-receive.err"
+  local pipe="$CTX_STATE_DIR/receive-pipe"
   total=$(stat -c %s "$stream")
 
-  btrfs receive -q "$top" <"$stream" 2>"$err" &
-  local pid=$!
-  while kill -0 "$pid" 2>/dev/null; do
-    # || true is load-bearing: the receiver can exit between the kill -0
+  # A named pipe rather than |: each stage is its own child with its own
+  # status to wait on (waiting on a background pipeline folds the stages
+  # together under pipefail), and the decompressor's pid is in hand for the
+  # progress read.
+  rm -f "$pipe"
+  mkfifo "$pipe" || fail "could not create the receive pipe at $pipe"
+  btrfs receive -q "$top" <"$pipe" 2>"$err" &
+  local receive_pid=$!
+  "${ROOT_IMAGE_DECOMPRESS[@]}" <"$stream" >"$pipe" 2>>"$err" &
+  local unzstd_pid=$!
+  while kill -0 "$unzstd_pid" 2>/dev/null; do
+    # || true is load-bearing: the decompressor can exit between the kill -0
     # above and this read, and awk exits 2 on a file it cannot open. Under
     # set -eE that failure would abort the phase -- killing an install that
     # was seconds from done, over a progress reading nobody needs. An empty
     # pos is already the "no reading this time" case below.
-    pos=$(awk '/^pos:/ { print $2; exit }' "/proc/$pid/fdinfo/0" 2>/dev/null || true)
+    pos=$(awk '/^pos:/ { print $2; exit }' "/proc/$unzstd_pid/fdinfo/0" 2>/dev/null || true)
     [[ -n $pos && $total -gt 0 ]] &&
       phases_write_progress "$(awk -v p="$pos" -v t="$total" 'BEGIN { printf "%.4f", p / t }')"
     sleep 0.5
   done
-  if ! wait "$pid"; then
-    fail "btrfs receive failed: $(tr -d '\0' <"$err")"
+  local unzstd_code=0 receive_code=0
+  wait "$unzstd_pid" || unzstd_code=$?
+  wait "$receive_pid" || receive_code=$?
+  rm -f "$pipe"
+  if ((receive_code != 0 || unzstd_code != 0)); then
+    # Both children share the error file, so the full story is in the detail
+    # either way; the headline names the stage that broke the pipe.
+    local stage="btrfs receive"
+    ((receive_code != 0)) || stage="root image decompression"
+    fail "$stage failed: $(tr -d '\0' <"$err")"
   fi
   phases_write_progress 1
 }

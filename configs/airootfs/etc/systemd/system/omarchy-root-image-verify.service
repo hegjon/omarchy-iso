@@ -21,8 +21,8 @@ Description=Verify the Omarchy install payload on the install medium
 # start, and without this a not-yet-mounted medium would skip the unit
 # silently instead of waiting -- the gate would then say "will not run".
 RequiresMountsFor=/run/archiso/bootmnt
-ConditionPathExists=/run/archiso/bootmnt/arch/x86_64/omarchy-root.btrfs
-ConditionPathExists=/run/archiso/bootmnt/arch/x86_64/omarchy-root.btrfs.sha256
+ConditionPathExists=/run/archiso/bootmnt/arch/x86_64/omarchy-root.btrfs.zst
+ConditionPathExists=/run/archiso/bootmnt/arch/x86_64/omarchy-root.btrfs.zst.sha256
 
 [Service]
 Type=oneshot
@@ -34,7 +34,7 @@ RemainAfterExit=yes
 # forever. On timeout Result=timeout tells the wait helper to report a slow
 # medium rather than a corrupt one.
 WorkingDirectory=/run/archiso/bootmnt/arch/x86_64
-ExecStart=/usr/bin/sha256sum --check --strict omarchy-root.btrfs.sha256
+ExecStart=/usr/bin/sha256sum --check --strict omarchy-root.btrfs.zst.sha256
 # Background work: never compete with the console or anything interactive.
 Nice=19
 IOSchedulingClass=idle

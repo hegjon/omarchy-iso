@@ -13,6 +13,15 @@
 # measured at roughly half the time of extracting the same packages with pacman,
 # independent of CPU count; the per-machine delta is a small pacstrap after.
 #
+# The stream itself then gets an outer zstd layer (STREAM_COMPRESS below). The
+# per-extent compression above cannot see past a 128 KiB extent, so the send
+# stream still carries its protocol framing uncompressed plus redundancy that
+# only exists across extents; one whole-stream pass reclaims ~11% (measured on
+# a 3.75 GB stream — and the level barely matters, the long-range window does).
+# The installer decompresses it in the receive pipe, where zstd -d is orders of
+# magnitude faster than any install medium; the extents inside still land on
+# disk as they are.
+#
 # Usage: build-root-image.sh <pacman.conf> <output-stream> <package>...
 #
 #   pacman.conf     Config whose repositories resolve every package; its
@@ -51,6 +60,12 @@ fi
 # stores the extents as they arrive, so neither choice affects install speed;
 # the installed system writes new data at its own mount option either way.
 IMAGE_COMPRESS="compress-force=zstd:15"
+# Outer layer over the whole send stream. Level 15 and the 128 MiB long-range
+# window are each worth a few hundred MB/-tens of MB respectively over the
+# defaults; beyond either lies ~0.3% for minutes of build time (level 19+) or
+# a stream a stock `zstd -d` refuses (--long>27 exceeds the decoder's default
+# window limit). -T0 is a pure win: ~25 s on a many-core builder, same bytes.
+STREAM_COMPRESS=(zstd -q -15 --long=27 -T0)
 # Name of the subvolume inside the stream. The orchestrator looks for this name
 # after `btrfs receive` (phases_impl.ROOT_IMAGE_SUBVOLUME).
 IMAGE_SUBVOLUME="omarchy-root"
@@ -190,5 +205,5 @@ sync
 btrfs property set -ts "$root" ro true
 rm -f "$output"
 mkdir -p "$(dirname "$output")"
-btrfs send -q --compressed-data -f "$output" "$root"
+btrfs send -q --compressed-data "$root" | "${STREAM_COMPRESS[@]}" -o "$output"
 echo "Root image stream: $(du -h "$output" | cut -f1) at $output"

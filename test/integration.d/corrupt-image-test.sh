@@ -3,51 +3,49 @@
 # A corrupt install medium is refused before the disk is touched. The root
 # image ships on the ISO with its sha256 beside it; omarchy-root-image-verify
 # checks it at boot and the installer's pre-flight phase takes that verdict.
-# Damage the image data on a copy of the ISO (the checksum stays right, the
-# bytes under it don't: a badly flashed stick), autoinstall from it, and
+# Flip one digit of the recorded checksum on a copy of the ISO (so the hash
+# of the image no longer matches what the medium claims — the same verdict a
+# badly flashed stick's damaged image produces), autoinstall from it, and
 # assert: the unit fails, the install halts in "Preparing install target"
 # telling the user to re-flash, nothing after that phase ran, and the target
-# disk still has no partition table.
+# disk still has no partition table. (That the verify truly reads the whole
+# multi-GB image is the slow-medium scenario's business, where the read is
+# what is being timed.)
 #
 # Boots the ISO itself, not the installed base image, so it needs no base.
 
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
 CORRUPT_ISO="$BASE_DIR/corrupt.iso"
-STREAM=arch/x86_64/omarchy-root.btrfs
+STREAM=arch/x86_64/omarchy-root.btrfs.zst
 VERIFY_UNIT=omarchy-root-image-verify.service
 STATE=/run/omarchy-install/state.json
 
 # ------------------------------------------------------------------ fixture
 
-# A copy of the ISO with 16 bytes of the root image overwritten (0xFF) a
-# third of the way in, deep in extent data. ISO9660 carries no per-file integrity
-# data, so patching in place leaves everything else on the medium intact
-# (cp --reflink makes the copy free on btrfs). The stream is found by the
-# NUL-terminated magic every btrfs send stream starts with; its length comes
-# from the ISO's directory.
+# A copy of the ISO with one hex digit of the recorded sha256 flipped.
+# ISO9660 carries no per-file integrity data, so patching in place leaves
+# everything else on the medium intact (cp --reflink makes the copy free on
+# btrfs). The 64-char digest is plain ASCII and unique on the ISO, so plain
+# grep -F finds the checksum file's bytes; the flip stays within the hex
+# alphabet so sha256sum reports a clean FAILED, not a format complaint.
 corrupt_iso() {
-  local start size offset
-  local damage='\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff'
+  local digest flip start
 
-  size=$(bsdtar -tvf "$ISO" "$STREAM" | awk '{print $5}')
-  [[ $size =~ ^[0-9]+$ ]] || { echo "no root image on the ISO at $STREAM" >&2; return 1; }
+  digest=$(bsdtar -xOf "$ISO" "$STREAM.sha256" | awk '{print $1}')
+  [[ $digest =~ ^[0-9a-f]{64}$ ]] || { echo "no recorded sha256 for $STREAM on the ISO" >&2; return 1; }
+  [[ ${digest:0:1} == 0 ]] && flip=1 || flip=0
 
-  log "Copying the ISO and corrupting its root image"
+  log "Copying the ISO and mis-recording the root image's checksum"
   rm -f "$CORRUPT_ISO"
   cp --reflink=auto "$ISO" "$CORRUPT_ISO"
-  # -F with the raw bytes in a pattern file, not -P with \xNN: Omarchy ships
-  # ugrep as grep, and ugrep's -P decodes \xNN as UTF-8 codepoints instead of
-  # raw bytes — identical for this ASCII+NUL magic, silently never matching
-  # for any pattern with bytes >= 0x80. This form means the same thing to
-  # GNU grep and ugrep.
-  printf 'btrfs-stream\0' >"$RUN_DIR/stream-magic"
-  start=$(LC_ALL=C grep -Fboa -m1 -f "$RUN_DIR/stream-magic" "$CORRUPT_ISO" | cut -d: -f1)
-  [[ -n $start ]] || { echo "btrfs send stream magic not found in the ISO image" >&2; return 1; }
+  # The digest is plain ASCII, so this works identically under GNU grep and
+  # the ugrep Omarchy ships as grep (whose -P \xNN byte escapes do not).
+  start=$(LC_ALL=C grep -Fboa -m1 -- "$digest" "$CORRUPT_ISO" | cut -d: -f1 || true)
+  [[ -n $start ]] || { echo "recorded checksum not found in the ISO image" >&2; return 1; }
 
-  offset=$((start + size / 3))
-  echo -ne "$damage" | dd of="$CORRUPT_ISO" bs=1 seek="$offset" conv=notrunc status=none
-  log "Image damaged at stream offset $((size / 3))"
+  printf '%s' "$flip" | dd of="$CORRUPT_ISO" bs=1 seek="$start" conv=notrunc status=none
+  log "Recorded sha256 flipped: ${digest:0:8}... now reads ${flip}${digest:1:7}..."
 }
 
 # -------------------------------------------------------------------- phases
