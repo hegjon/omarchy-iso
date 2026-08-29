@@ -1,16 +1,15 @@
 #!/bin/bash
 #
-# The systemd side of the install: omarchy-install.target as the umbrella the
-# phase units (and the keyring init) belong to, and the first migrated phase,
-# omarchy-install-image.service, hosted by run-phase. What is checked here is
-# the wiring that decides whether a phase runs in the right context and can
-# be aborted as a group — cheap to check, expensive to discover from a
-# wedged install.
+# The behavior of the install's systemd hosting, driven for real: the
+# run-phase entrypoint (dispatch, the destruction boundary, the failure-path
+# mount cleanup and error handover), the orchestrator's unit join, the CPU
+# governor helper against a fake sysfs, and the cross-process passphrase
+# guarantee. What a unit file merely declares is not restated here — the
+# integration installs prove the wiring.
 
 set -euo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
-UNITS="$ROOT/configs/airootfs/etc/systemd/system"
 ORCH="$ROOT/configs/airootfs/usr/share/omarchy-iso/orchestrator"
 
 failures=0
@@ -25,205 +24,9 @@ check() {
   fi
 }
 
-check "the install target exists" test -f "$UNITS/omarchy-install.target"
-check "the image unit is part of it" \
-  grep -qxF 'PartOf=omarchy-install.target' "$UNITS/omarchy-install-image.service"
-check "so is the keyring init" \
-  grep -qxF 'PartOf=omarchy-install.target' "$UNITS/omarchy-target-keyring.service"
-check "the orchestrator starts the target" \
-  grep -qF 'systemctl start omarchy-install.target' "$ORCH/main.sh"
-
-pacman_sync_wired() {
-  local unit="$UNITS/omarchy-pacman-sync.service"
-  grep -qxF 'PartOf=omarchy-install.target' "$unit" &&
-  grep -qxF 'Type=oneshot' "$unit" &&
-  grep -qxF 'RemainAfterExit=yes' "$unit" &&
-  grep -qxF 'ExecStart=/usr/bin/pacman -Syy' "$unit" &&
-  grep -qxF 'RequiresMountsFor=/var/cache/omarchy/mirror/offline' "$unit" &&
-  grep -qxF 'After=omarchy-mirror-verify.service' "$unit" &&
-  grep -qxF 'Nice=19' "$unit" &&
-  grep -qxF 'IOSchedulingClass=idle' "$unit" &&
-  grep -qxF 'WantedBy=multi-user.target' "$unit" &&
-  test -L "$UNITS/multi-user.target.wants/omarchy-pacman-sync.service" &&
-  grep -qF 'systemctl start "$PACMAN_SYNC_UNIT"' "$ROOT/archinstall-bash/lib/pacman.sh" &&
-  grep -qxF 'PACMAN_SYNC_UNIT=omarchy-pacman-sync.service' "$ROOT/archinstall-bash/lib/pacman.sh"
-}
-check "the pacman sync runs as a latched oneshot the library joins" pacman_sync_wired
-
-check "the image unit is a oneshot" \
-  grep -qxF 'Type=oneshot' "$UNITS/omarchy-install-image.service"
-check "it runs the phase through run-phase" \
-  grep -qxF 'ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase install_root_image' \
-    "$UNITS/omarchy-install-image.service"
-# Context defaults, this run's resolved values, and the raw inputs
-# ctx_from_env rebuilds the rest from — later files win.
-for env in '/usr/share/omarchy-iso/orchestrator/context.env' \
-           '-/run/omarchy-install/context.env' '-/run/omarchy-install/install.env'; do
-  check "image unit reads $env" \
-    grep -qxF "EnvironmentFile=$env" "$UNITS/omarchy-install-image.service"
-done
-check "its timeout is sized on the stream at build" \
-  grep -qF 'omarchy-install-image.service.d' "$ROOT/builder/build-iso.sh"
-
-# The second migrated phase: hibernation, ordered after the image — the edge
-# is inert while the orchestrator serializes, and is the graph the eventual
-# all-units install enforces by itself.
-check "the hibernation unit is part of the target" \
-  grep -qxF 'PartOf=omarchy-install.target' "$UNITS/omarchy-install-hibernation.service"
-check "it is ordered after the image unit" \
-  grep -qxF 'After=omarchy-install-image.service' "$UNITS/omarchy-install-hibernation.service"
-check "it runs its phase through run-phase" \
-  grep -qxF 'ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase configure_hibernation' \
-    "$UNITS/omarchy-install-hibernation.service"
-for env in '/usr/share/omarchy-iso/orchestrator/context.env' \
-           '-/run/omarchy-install/context.env' '-/run/omarchy-install/install.env'; do
-  check "hibernation unit reads $env" \
-    grep -qxF "EnvironmentFile=$env" "$UNITS/omarchy-install-hibernation.service"
-done
-check "the phase loop runs hibernation via its unit" \
-  grep -qF "add_phase 'Configuring hibernation' configure_hibernation_unit" "$ORCH/main.sh"
-
-# Third: the system finalizer, ordered after hibernation.
-check "the system unit is part of the target" \
-  grep -qxF 'PartOf=omarchy-install.target' "$UNITS/omarchy-install-system.service"
-check "it is ordered after the hibernation unit" \
-  grep -qxF 'After=omarchy-install-hibernation.service' "$UNITS/omarchy-install-system.service"
-check "it runs its phase through run-phase" \
-  grep -qxF 'ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase run_system_finalizer' \
-    "$UNITS/omarchy-install-system.service"
-for env in '/usr/share/omarchy-iso/orchestrator/context.env' \
-           '-/run/omarchy-install/context.env' '-/run/omarchy-install/install.env'; do
-  check "system unit reads $env" \
-    grep -qxF "EnvironmentFile=$env" "$UNITS/omarchy-install-system.service"
-done
-check "the phase loop runs the system finalizer via its unit" \
-  grep -qF "add_phase 'Configuring system' run_system_finalizer_unit" "$ORCH/main.sh"
-
-# Fourth: provisioning staging, after the system finalizer.
-check "the provisioning unit is part of the target" \
-  grep -qxF 'PartOf=omarchy-install.target' "$UNITS/omarchy-install-provisioning.service"
-check "it is ordered after the system unit" \
-  grep -qxF 'After=omarchy-install-system.service' "$UNITS/omarchy-install-provisioning.service"
-check "it runs its phase through run-phase" \
-  grep -qxF 'ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase stage_provisioning_state' \
-    "$UNITS/omarchy-install-provisioning.service"
-for env in '/usr/share/omarchy-iso/orchestrator/context.env' \
-           '-/run/omarchy-install/context.env' '-/run/omarchy-install/install.env'; do
-  check "provisioning unit reads $env" \
-    grep -qxF "EnvironmentFile=$env" "$UNITS/omarchy-install-provisioning.service"
-done
-check "the phase loop runs provisioning staging via its unit" \
-  grep -qF "add_phase 'Staging provisioning' stage_provisioning_state_unit" "$ORCH/main.sh"
-
-# Fifth: the Limine finalization, after provisioning staging.
-check "the limine unit is part of the target" \
-  grep -qxF 'PartOf=omarchy-install.target' "$UNITS/omarchy-install-limine.service"
-check "it is ordered after the provisioning unit" \
-  grep -qxF 'After=omarchy-install-provisioning.service' "$UNITS/omarchy-install-limine.service"
-check "it runs its phase through run-phase" \
-  grep -qxF 'ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase finalize_limine_boot' \
-    "$UNITS/omarchy-install-limine.service"
-for env in '/usr/share/omarchy-iso/orchestrator/context.env' \
-           '-/run/omarchy-install/context.env' '-/run/omarchy-install/install.env'; do
-  check "limine unit reads $env" \
-    grep -qxF "EnvironmentFile=$env" "$UNITS/omarchy-install-limine.service"
-done
-check "the phase loop runs the limine finalization via its unit" \
-  grep -qF "add_phase 'Finalizing Limine boot' finalize_limine_boot_unit" "$ORCH/main.sh"
-
-# Sixth: the user finalizer, after the Limine finalization.
-check "the user unit is part of the target" \
-  grep -qxF 'PartOf=omarchy-install.target' "$UNITS/omarchy-install-user.service"
-check "it is ordered after the limine unit" \
-  grep -qxF 'After=omarchy-install-limine.service' "$UNITS/omarchy-install-user.service"
-check "it runs its phase through run-phase" \
-  grep -qxF 'ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase run_chroot_finalizer' \
-    "$UNITS/omarchy-install-user.service"
-for env in '/usr/share/omarchy-iso/orchestrator/context.env' \
-           '-/run/omarchy-install/context.env' '-/run/omarchy-install/install.env'; do
-  check "user unit reads $env" \
-    grep -qxF "EnvironmentFile=$env" "$UNITS/omarchy-install-user.service"
-done
-check "the phase loop runs the user finalizer via its unit" \
-  grep -qF "add_phase 'Finalizing user' run_chroot_finalizer_unit" "$ORCH/main.sh"
-
-# The config quartet, standard shape, chained in phase order.
-quartet() {
-  local name fn after
-  for spec in login:configure_login:omarchy-install-user.service \
-              ssh:configure_ssh_access:omarchy-install-login.service \
-              tailscale:configure_tailscale:omarchy-install-ssh.service \
-              dns:configure_dns_resolver:omarchy-install-tailscale.service; do
-    IFS=: read -r name fn after <<<"$spec"
-    local unit="$UNITS/omarchy-install-$name.service"
-    grep -qxF 'PartOf=omarchy-install.target' "$unit" || return 1
-    grep -qxF "After=$after" "$unit" || return 1
-    grep -qxF "ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase $fn" "$unit" || return 1
-    grep -qxF 'EnvironmentFile=-/run/omarchy-install/install.env' "$unit" || return 1
-    grep -qF "${fn}_unit" "$ORCH/main.sh" || return 1
-  done
-}
-check "the config quartet (login, ssh, tailscale, dns) is wired as units" quartet
-
-# Boot validation, after the quartet's tail.
-boot_validation_unit() {
-  local unit="$UNITS/omarchy-install-validate-boot.service"
-  grep -qxF 'PartOf=omarchy-install.target' "$unit" &&
-  grep -qxF 'After=omarchy-install-dns.service' "$unit" &&
-  grep -qxF 'ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase validate_boot' "$unit" &&
-  grep -qxF 'EnvironmentFile=-/run/omarchy-install/install.env' "$unit" &&
-  grep -qF "add_phase 'Validating boot setup' validate_boot_unit" "$ORCH/main.sh"
-}
-check "boot validation is wired as a unit" boot_validation_unit
-
-# The factory snapshot: last in the chain, also ordered after the keyring
-# unit it joins.
-factory_snapshot_unit() {
-  local unit="$UNITS/omarchy-install-factory-snapshot.service"
-  grep -qxF 'PartOf=omarchy-install.target' "$unit" &&
-  grep -qxF 'After=omarchy-install-validate-boot.service omarchy-target-keyring.service' "$unit" &&
-  grep -qxF 'ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase create_factory_snapshot' "$unit" &&
-  grep -qxF 'EnvironmentFile=-/run/omarchy-install/install.env' "$unit" &&
-  grep -qF "add_phase 'Creating factory snapshot' create_factory_snapshot_unit" "$ORCH/main.sh"
-}
-check "the factory snapshot is wired as a unit" factory_snapshot_unit
-
-# The pre-format phases carry the opt-out instead of the mountpoint guard.
-prepare_live_unit_wired() {
-  local unit="$UNITS/omarchy-install-prepare-live.service"
-  grep -qxF 'PartOf=omarchy-install.target' "$unit" &&
-  grep -qxF 'Environment=RUN_PHASE_NO_TARGET=1' "$unit" &&
-  grep -qxF 'ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase prepare_live' "$unit" &&
-  grep -qF "add_phase 'Preparing live environment' prepare_live_unit" "$ORCH/main.sh"
-}
-check "live preparation is wired as a pre-format unit" prepare_live_unit_wired
-
-prepare_target_unit_wired() {
-  local unit="$UNITS/omarchy-install-prepare-target.service"
-  grep -qxF 'PartOf=omarchy-install.target' "$unit" &&
-  grep -qxF 'After=omarchy-install-prepare-live.service' "$unit" &&
-  grep -qxF 'Environment=RUN_PHASE_NO_TARGET=1' "$unit" &&
-  grep -qxF 'TimeoutStartSec=infinity' "$unit" &&
-  grep -qxF 'ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase prepare_install_target' "$unit" &&
-  grep -qF "add_phase 'Preparing install target' prepare_install_target_unit" "$ORCH/main.sh"
-}
-check "the pre-flight gate is wired as a pre-format unit" prepare_target_unit_wired
-
-# The CPU boost: pulled by the target's Wants=, restored by its ExecStop —
-# boost and restore run in different processes, so the mechanics are driven
-# against a fake sysfs to prove the state file carries the governors across.
-cpu_boost_wired() {
-  local unit="$UNITS/omarchy-install-cpu-boost.service"
-  grep -qxF 'Wants=omarchy-install-cpu-boost.service' "$UNITS/omarchy-install.target" &&
-  grep -qxF 'PartOf=omarchy-install.target' "$unit" &&
-  grep -qxF 'RemainAfterExit=yes' "$unit" &&
-  grep -qxF 'ExecStart=/usr/local/bin/omarchy-cpu-governor boost' "$unit" &&
-  grep -qxF 'ExecStop=/usr/local/bin/omarchy-cpu-governor restore' "$unit" &&
-  grep -qxF 'WantedBy=multi-user.target' "$unit" &&
-  test -L "$UNITS/multi-user.target.wants/omarchy-install-cpu-boost.service"
-}
-check "the CPU boost unit is wired to the target" cpu_boost_wired
-
+# The governor helper: boost and restore run in different processes, so the
+# mechanics are driven against a fake sysfs to prove the state file carries
+# the governors across.
 cpu_governor_mechanics() {
   local d
   d=$(mktemp -d) || return 1
@@ -360,4 +163,4 @@ if (( failures > 0 )); then
   printf '%d check(s) failed\n' "$failures" >&2
   exit 1
 fi
-printf 'the install target and its phase units are wired\n'
+printf 'the install phase hosting behaves\n'
