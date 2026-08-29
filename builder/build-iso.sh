@@ -68,6 +68,12 @@ rm -rf "$build_cache_dir/airootfs/etc/systemd/system/multi-user.target.wants/ref
 rm -rf "$build_cache_dir/airootfs/etc/systemd/system/reflector.service.d"
 rm -rf "$build_cache_dir/airootfs/etc/xdg/reflector"
 
+# releng runs sshd as a boot daemon; the live ISO answers on 22 via the
+# profile's socket-activated sshd.socket instead — a per-connection sshd@
+# that also defers host key generation to the first connection. Same auth
+# behavior (releng's sshd_config drop-in stays), different start mechanism.
+rm -f "$build_cache_dir/airootfs/etc/systemd/system/multi-user.target.wants/sshd.service"
+
 # Bring in our archiso profile additions.
 cp -r /configs/* "$build_cache_dir/"
 
