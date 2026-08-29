@@ -65,7 +65,9 @@ IMAGE_COMPRESS="compress-force=zstd:15"
 # defaults; beyond either lies ~0.3% for minutes of build time (level 19+) or
 # a stream a stock `zstd -d` refuses (--long>27 exceeds the decoder's default
 # window limit). -T0 is a pure win: ~25 s on a many-core builder, same bytes.
-STREAM_COMPRESS=(zstd -q -15 --long=27 -T0)
+# Niced: -T0 at this level saturates every core, and a build is background
+# work on a developer's machine -- the desktop keeps the CPU when it asks.
+STREAM_COMPRESS=(nice -n 15 zstd -q -15 --long=27 -T0)
 # Name of the subvolume inside the stream. The orchestrator looks for this name
 # after `btrfs receive` (phases_impl.ROOT_IMAGE_SUBVOLUME).
 IMAGE_SUBVOLUME="omarchy-root"
