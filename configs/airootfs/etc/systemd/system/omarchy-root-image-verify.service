@@ -36,7 +36,7 @@ RemainAfterExit=yes
 WorkingDirectory=/run/archiso/bootmnt/arch/x86_64
 ExecStart=/usr/bin/sha256sum --check --strict omarchy-root.btrfs.zst.sha256
 # Background work: never compete with the console or anything interactive.
-Nice=19
+Nice=15
 IOSchedulingClass=idle
 
 [Install]

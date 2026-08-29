@@ -26,7 +26,7 @@ TimeoutStartSec=120
 # hashes, which are the reads that gate the install — idle-class IO yields
 # the medium to them entirely, and the work is small enough that it still
 # finishes long before the wizard does.
-Nice=19
+Nice=15
 IOSchedulingClass=idle
 ExecStart=/usr/bin/pacman -Syy
 

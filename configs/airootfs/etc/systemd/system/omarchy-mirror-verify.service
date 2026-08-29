@@ -27,8 +27,7 @@ ExecStart=/usr/local/bin/omarchy-verify-mirror
 #
 # Idle in CPU and I/O: the install and the person at the keyboard always win,
 # and the gate is what decides when this has to be finished by.
-Nice=19
-CPUSchedulingPolicy=idle
+Nice=15
 IOSchedulingClass=idle
 
 [Install]
