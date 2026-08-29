@@ -99,6 +99,27 @@ install_from_slow_medium() {
     ((gated += 2))
   done
 
+  # The image hash is the LAST of the boot readers: at gate time it can
+  # still sit queued behind the mirror verify, where ActiveState reads
+  # "inactive", not "activating". The gate waits mirror-first, so the unit
+  # starts as soon as the mirror verify is done -- wait out that handover
+  # before asserting, because the choke below must land mid-hash of the
+  # stream, which is the read the field failure stalls.
+  local handover=0
+  until ssh_live_root "systemctl show -p ActiveState --value $VERIFY_UNIT | grep -qx activating" 2>/dev/null; do
+    if ! vm_running; then
+      echo "VM exited before the image hash started" >&2
+      return 1
+    fi
+    if ((handover >= 180)); then
+      capture_console "failure-hash-start-timeout"
+      echo "Timed out waiting for the image hash to start" >&2
+      return 1
+    fi
+    sleep 2
+    ((handover += 2))
+  done
+
   # If the hash already finished, the gate passes legitimately and nothing
   # below tests the timeout; the throttle above is sized to prevent this.
   check "verify unit is still hashing when the medium dies" \

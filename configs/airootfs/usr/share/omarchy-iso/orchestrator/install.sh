@@ -116,8 +116,13 @@ prepare_install_target() {
   else
     verify_root_image_layout
   fi
-  verify_root_image_stream
+  # Verdicts in the readers' own boot order -- mirror first, image last.
+  # The image unit is ordered after the mirror verify, so a wait on it
+  # cannot end before the mirror's has anyway; waiting image-first on a
+  # dying medium serializes both size-based timeouts before the user hears
+  # "too slow", where mirror-first surfaces the earliest verdict there is.
   verify_offline_mirror
+  verify_root_image_stream
 }
 
 # The phase as its systemd unit (PartOf=omarchy-install.target); the
