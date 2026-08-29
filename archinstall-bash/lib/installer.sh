@@ -36,7 +36,7 @@ installer_init() {
   INST_ZRAM_ENABLED=0
   INST_DISABLE_FSTRIM=0
   INST_INIT_TIME=$(date '+%Y-%m-%d_%H-%M-%S')
-  INST_HELPER_FLAGS=([base]=false [bootloader]='')
+  INST_HELPER_FLAGS=([base]=false)
   PACMAN_SYNCED=0
   PACMAN_OPTIONAL_REPOS=()
   mkdir -p "$INST_TARGET"
@@ -301,13 +301,6 @@ installer_enable_service() {
   done
 }
 
-installer_disable_service() {
-  local service
-  for service in "$@"; do
-    info "Disabling service $service"
-    sys_cmd systemctl --root="$INST_TARGET" disable "$service" || die "Unable to disable service $service: $SYS_CMD_OUTPUT"
-  done
-}
 
 installer_enable_periodic_trim() {
   info 'Enabling periodic TRIM'
@@ -412,14 +405,7 @@ installer_set_user_password() {
   }
 }
 
-installer_user_set_shell() {
-  info "Setting shell for $1 to $2"
-  chroot_cmd chsh -s "$2" "$1"
-}
 
-installer_chown() {
-  chroot_cmd chown "${@:3}" -- "$1" "$2"
-}
 
 # run_custom_user_commands()
 installer_run_custom_user_commands() {

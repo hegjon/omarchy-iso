@@ -32,7 +32,6 @@ assert_eq 'timezone' "$CFG_TIMEZONE" Europe/Oslo
 assert_eq 'kernels' "${CFG_KERNELS[*]}" linux
 assert_eq 'keymap' "$CFG_LOCALE_KB" no
 assert_eq 'bootloader' "$CFG_BOOTLOADER" limine
-assert_eq 'uki' "$CFG_BOOT_UKI" false
 assert_eq 'swap' "$CFG_SWAP_ENABLED" true
 assert_eq 'parallel downloads (deprecated key)' "$CFG_HAS_PACMAN_CONFIG/$CFG_PARALLEL_DOWNLOADS" true/8
 assert_eq 'network' "$CFG_NETWORK_TYPE" iso

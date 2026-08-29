@@ -91,7 +91,7 @@ Omarchy-specific conveniences that upstream lacks:
   `udevadm settle` instead of aborting.
 * An existing `/dev/mapper/<name>` backed by a different device is an error;
   upstream would treat it as already unlocked.
-* `bootloader_config` is parsed and exposed (`CFG_BOOTLOADER`, `CFG_BOOT_UKI`,
+* `bootloader_config` is parsed and exposed (`CFG_BOOTLOADER`,
   `CFG_BOOT_REMOVABLE`) but no bootloader is installed; `--offline`,
   `--skip-ntp`, `--skip-wkd`, `--skip-boot`, `--silent` are accepted and
   always in effect.

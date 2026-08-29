@@ -20,7 +20,7 @@ CFG_LOCALE_KB='' CFG_LOCALE_LANG=en_US.UTF-8 CFG_LOCALE_ENC=UTF-8 CFG_LOCALE_FON
 CFG_HAS_MIRROR_CONFIG=false
 CFG_MIRROR_CUSTOM_SERVERS=() CFG_MIRROR_REGIONS=() CFG_MIRROR_OPTIONAL_REPOS=()
 CFG_MIRROR_CUSTOM_REPOS=() # "name<TAB>url<TAB>SignCheck<TAB>SignOption"
-CFG_BOOTLOADER='' CFG_BOOT_UKI=false CFG_BOOT_REMOVABLE=false
+CFG_BOOTLOADER='' CFG_BOOT_REMOVABLE=false
 CFG_NETWORK_TYPE=''
 CFG_HAS_APP_CONFIG=false CFG_AUDIO='' CFG_BLUETOOTH=false
 CFG_ROOT_ENC_PASSWORD=''
@@ -42,9 +42,6 @@ cfg() {
   jq -r "$1" <<<"$CONFIG_JSON"
 }
 
-cfg_json() {
-  jq -c "$1" <<<"$CONFIG_JSON"
-}
 
 # Read lines of `jq -r` output into an array (newline separated, no empties).
 _cfg_array() {
@@ -125,11 +122,9 @@ config_parse() {
   # itself); this port installs no bootloader.
   if [[ $(cfg '.bootloader_config | type') == object ]]; then
     CFG_BOOTLOADER=$(bootloader_from_arg "$(cfg '.bootloader_config.bootloader // empty')")
-    CFG_BOOT_UKI=$(cfg '.bootloader_config.uki // false')
     CFG_BOOT_REMOVABLE=$(cfg '.bootloader_config.removable // false')
   elif [[ -n $(cfg '.bootloader // empty') ]]; then
     CFG_BOOTLOADER=$(bootloader_from_arg "$(cfg '.bootloader')")
-    CFG_BOOT_UKI=$(cfg '.uki // false')
     CFG_BOOT_REMOVABLE=true
   fi
   [[ -n $(cfg '.bootloader_config.plymouth // empty') ]] && warn 'bootloader_config.plymouth is not supported by this port and will be ignored'
@@ -340,12 +335,13 @@ config_parse_encryption() {
 
 # Bootloader.from_arg(), names only.
 bootloader_from_arg() {
+  # Omarchy installs Limine and nothing else; refuse anything foreign here,
+  # in the config parse, instead of three phases later with the disk already
+  # formatted.
   case ${1,,} in
-    '') printf '' ;;
-    systemd-boot|systemd) printf 'systemd' ;;
-    grub|efistub|limine|refind) printf '%s' "${1,,}" ;;
+    limine) printf 'limine' ;;
     'no bootloader'|no_bootloader|none) printf 'no_bootloader' ;;
-    *) die "Invalid bootloader value \"$1\". Allowed values: Systemd-boot, Grub, Efistub, Limine, Refind, No bootloader" ;;
+    *) die "Unsupported bootloader \"$1\": this port installs Limine (or no bootloader)" ;;
   esac
 }
 
@@ -412,10 +408,6 @@ part_mapper_dev() {
   printf '/dev/mapper/%s' "$(part_mapper_name "$1")"
 }
 
-part_safe_dev_path() {
-  [[ -n ${PART_DEVPATH[$1]} ]] || die 'Device path was not set'
-  printf '%s' "${PART_DEVPATH[$1]}"
-}
 
 part_safe_fs_type() {
   [[ -n ${PART_FS[$1]} ]] || die 'File system type is not set'
@@ -478,9 +470,6 @@ disk_is_pre_mount() {
   [[ $DISK_CONFIG_TYPE == pre_mounted_config ]]
 }
 
-disk_is_encrypted() {
-  [[ $ENC_TYPE != no_encryption ]]
-}
 
 # DeviceHandler.detect_pre_mounted_mods(): describe whatever is mounted below
 # the target as existing partitions, with mountpoints rebased to /.
@@ -569,9 +558,9 @@ config_save() {
 
 config_summary() {
   local i
-  printf 'Hostname:   %s\nTimezone:   %s\nKernels:    %s\nLocale:     %s %s (keymap %s)\nBootloader: %s (uki=%s removable=%s)\nSwap:       zram=%s\nUsers:      %s\n' \
+  printf 'Hostname:   %s\nTimezone:   %s\nKernels:    %s\nLocale:     %s %s (keymap %s)\nBootloader: %s (removable=%s)\nSwap:       zram=%s\nUsers:      %s\n' \
     "$CFG_HOSTNAME" "$CFG_TIMEZONE" "${CFG_KERNELS[*]:-linux}" "$CFG_LOCALE_LANG" "$CFG_LOCALE_ENC" "$CFG_LOCALE_KB" \
-    "${CFG_BOOTLOADER:-none}" "$CFG_BOOT_UKI" "$CFG_BOOT_REMOVABLE" "$CFG_SWAP_ENABLED" "${USER_NAME[*]:-<none>}"
+    "${CFG_BOOTLOADER:-none}" "$CFG_BOOT_REMOVABLE" "$CFG_SWAP_ENABLED" "${USER_NAME[*]:-<none>}"
   printf 'Disk:       %s' "${DISK_CONFIG_TYPE:-<none>}"
   [[ -n $DISK_MOUNTPOINT ]] && printf ' at %s' "$DISK_MOUNTPOINT"
   printf '\n'

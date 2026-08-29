@@ -38,36 +38,7 @@ debug_log() {
   printf '[install-debug] %s\n' "$*" >>"$CTX_LOG_PATH"
 }
 
-debug_dump_file() {
-  install_debug_enabled || return 0
-  local path=$1 max_lines=${2:-120} digest n=0 line
-  if [[ ! -r $path ]]; then
-    debug_log "unable to dump $path: not readable"
-    return 0
-  fi
-  digest=$(sha256sum "$path" | cut -d' ' -f1)
-  debug_log "dumping $path sha256=$digest"
-  while IFS= read -r line || [[ -n $line ]]; do
-    n=$((n + 1))
-    if ((n > max_lines)); then
-      printf '[install-debug] ... truncated after %s lines ...\n' "$max_lines" >>"$CTX_LOG_PATH"
-      break
-    fi
-    printf '[install-debug] %s:%s: %s\n' "$path" "$n" "$line" >>"$CTX_LOG_PATH"
-  done <"$path"
-}
 
-debug_run() {
-  install_debug_enabled || return 0
-  local out err rc=0 line
-  debug_log "+ $*"
-  out=$(mktemp) err=$(mktemp)
-  "$@" >"$out" 2>"$err" || rc=$?
-  while IFS= read -r line; do printf '[install-debug] stdout: %s\n' "$line" >>"$CTX_LOG_PATH"; done <"$out"
-  while IFS= read -r line; do printf '[install-debug] stderr: %s\n' "$line" >>"$CTX_LOG_PATH"; done <"$err"
-  rm -f "$out" "$err"
-  debug_log "exit $rc: $*"
-}
 
 prepare_target_setup() {
   [[ $CTX_TARGET_SETUP_PREPARED == true ]] && return 0

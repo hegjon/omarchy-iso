@@ -29,11 +29,6 @@ orchestrator_record_error() {
   ORCH_LAST_ERROR=$*
 }
 
-# Read a whole file into stdout, tolerating a missing one.
-read_text() {
-  [[ -f $1 ]] && cat "$1"
-  return 0
-}
 
 # _optional_path(): a path the caller always passes but that need not exist.
 # Prints it when the file is there, nothing otherwise.
