@@ -14,7 +14,7 @@ set -uo pipefail
 CPU_SYSFS=${CPU_SYSFS:-/sys/devices/system/cpu}
 STATE="${OMARCHY_INSTALL_STATE_DIR:-/run/omarchy-install}/cpu-governors"
 
-case ${1:?usage: omarchy-install-cpu-governor boost|restore} in
+case ${1:?usage: omarchy-cpu-governor boost|restore} in
   boost)
     mkdir -p "${STATE%/*}"
     : >"$STATE"

@@ -200,8 +200,10 @@ cpu_boost_wired() {
   grep -qxF 'Wants=omarchy-install-cpu-boost.service' "$UNITS/omarchy-install.target" &&
   grep -qxF 'PartOf=omarchy-install.target' "$unit" &&
   grep -qxF 'RemainAfterExit=yes' "$unit" &&
-  grep -qxF 'ExecStart=/usr/local/bin/omarchy-install-cpu-governor boost' "$unit" &&
-  grep -qxF 'ExecStop=/usr/local/bin/omarchy-install-cpu-governor restore' "$unit"
+  grep -qxF 'ExecStart=/usr/local/bin/omarchy-cpu-governor boost' "$unit" &&
+  grep -qxF 'ExecStop=/usr/local/bin/omarchy-cpu-governor restore' "$unit" &&
+  grep -qxF 'WantedBy=multi-user.target' "$unit" &&
+  test -L "$UNITS/multi-user.target.wants/omarchy-install-cpu-boost.service"
 }
 check "the CPU boost unit is wired to the target" cpu_boost_wired
 
@@ -212,11 +214,11 @@ cpu_governor_mechanics() {
   printf 'schedutil\n' >"$d/sys/cpu0/cpufreq/scaling_governor"
   printf 'powersave\n' >"$d/sys/cpu1/cpufreq/scaling_governor"
   CPU_SYSFS="$d/sys" OMARCHY_INSTALL_STATE_DIR="$d/state" \
-    "$ROOT/configs/airootfs/usr/local/bin/omarchy-install-cpu-governor" boost >/dev/null &&
+    "$ROOT/configs/airootfs/usr/local/bin/omarchy-cpu-governor" boost >/dev/null &&
   [[ $(<"$d/sys/cpu0/cpufreq/scaling_governor") == performance ]] &&
   [[ $(<"$d/sys/cpu1/cpufreq/scaling_governor") == performance ]] &&
   CPU_SYSFS="$d/sys" OMARCHY_INSTALL_STATE_DIR="$d/state" \
-    "$ROOT/configs/airootfs/usr/local/bin/omarchy-install-cpu-governor" restore &&
+    "$ROOT/configs/airootfs/usr/local/bin/omarchy-cpu-governor" restore &&
   [[ $(<"$d/sys/cpu0/cpufreq/scaling_governor") == schedutil ]] &&
   [[ $(<"$d/sys/cpu1/cpufreq/scaling_governor") == powersave ]] &&
   [[ ! -e $d/state/cpu-governors ]]
