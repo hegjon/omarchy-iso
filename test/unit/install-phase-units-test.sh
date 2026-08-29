@@ -39,6 +39,12 @@ pacman_sync_wired() {
   grep -qxF 'Type=oneshot' "$unit" &&
   grep -qxF 'RemainAfterExit=yes' "$unit" &&
   grep -qxF 'ExecStart=/usr/bin/pacman -Syy' "$unit" &&
+  grep -qxF 'RequiresMountsFor=/var/cache/omarchy/mirror/offline' "$unit" &&
+  grep -qxF 'After=omarchy-mirror-verify.service' "$unit" &&
+  grep -qxF 'Nice=19' "$unit" &&
+  grep -qxF 'IOSchedulingClass=idle' "$unit" &&
+  grep -qxF 'WantedBy=multi-user.target' "$unit" &&
+  test -L "$UNITS/multi-user.target.wants/omarchy-pacman-sync.service" &&
   grep -qF 'systemctl start "$PACMAN_SYNC_UNIT"' "$ROOT/archinstall-bash/lib/pacman.sh" &&
   grep -qxF 'PACMAN_SYNC_UNIT=omarchy-pacman-sync.service' "$ROOT/archinstall-bash/lib/pacman.sh"
 }
