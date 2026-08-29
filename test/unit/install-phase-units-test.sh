@@ -33,6 +33,17 @@ check "so is the keyring init" \
 check "the orchestrator starts the target" \
   grep -qF 'systemctl start omarchy-install.target' "$ORCH/main.sh"
 
+pacman_sync_wired() {
+  local unit="$UNITS/omarchy-pacman-sync.service"
+  grep -qxF 'PartOf=omarchy-install.target' "$unit" &&
+  grep -qxF 'Type=oneshot' "$unit" &&
+  grep -qxF 'RemainAfterExit=yes' "$unit" &&
+  grep -qxF 'ExecStart=/usr/bin/pacman -Syy' "$unit" &&
+  grep -qF 'systemctl start "$PACMAN_SYNC_UNIT"' "$ROOT/archinstall-bash/lib/pacman.sh" &&
+  grep -qxF 'PACMAN_SYNC_UNIT=omarchy-pacman-sync.service' "$ROOT/archinstall-bash/lib/pacman.sh"
+}
+check "the pacman sync runs as a latched oneshot the library joins" pacman_sync_wired
+
 check "the image unit is a oneshot" \
   grep -qxF 'Type=oneshot' "$UNITS/omarchy-install-image.service"
 check "it runs the phase through run-phase" \

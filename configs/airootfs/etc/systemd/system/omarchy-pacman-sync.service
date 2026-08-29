@@ -1,0 +1,13 @@
+[Unit]
+Description=Sync the pacman databases from the offline mirror
+# Not pulled by the install target: the first pacman_strap joins this with a
+# blocking start, always after the prepare-live phase has bind-mounted the
+# offline mirror. RemainAfterExit latches the success, so every later strap
+# (including ones in other phase processes) gets a state query, not a resync.
+PartOf=omarchy-install.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=120
+ExecStart=/usr/bin/pacman -Syy

@@ -37,7 +37,6 @@ installer_init() {
   INST_DISABLE_FSTRIM=0
   INST_INIT_TIME=$(date '+%Y-%m-%d_%H-%M-%S')
   INST_HELPER_FLAGS=([base]=false)
-  PACMAN_SYNCED=0
   PACMAN_OPTIONAL_REPOS=()
   mkdir -p "$INST_TARGET"
 }

@@ -2,43 +2,16 @@
 # Port of lib/pacman/pacman.py (Pacman) and lib/pacman/config.py (PacmanConfig).
 
 PACMAN_CONF=/etc/pacman.conf
-PACMAN_SYNCED=0
 PACMAN_OPTIONAL_REPOS=()
-# Set to 1 to strap only packages the target does not already hold
-# (what Omarchy's root-image install needs; pacstrap --needed still has to
-# resolve every target otherwise).
 
-# Pacman.run(): wait for a foreign pacman to release the db lock first.
-pacman_run() {
-  local lock=/var/lib/pacman/db.lck started
-  [[ -e $lock ]] && warn 'Pacman is already running, waiting maximum 10 minutes for it to terminate.'
-  started=$SECONDS
-  while [[ -e $lock ]]; do
-    sleep 0.25
-    if ((SECONDS - started > 600)); then
-      die 'Pre-existing pacman lock never exited. Please clean up any existing pacman sessions before using archinstall.'
-    fi
-  done
-  sys_cmd pacman "$@"
-}
+PACMAN_SYNC_UNIT=omarchy-pacman-sync.service
 
-pacman_reinit_keyring() {
-  pgrep -x gpg-agent >/dev/null 2>&1 && sys_cmd killall gpg-agent
-  sys_cmd pacman-key --init && sys_cmd pacman-key --populate archlinux && debug 'Keyring reinitialized successfully' ||
-    debug "Keyring reinit failed: $SYS_CMD_OUTPUT"
-}
-
-# Pacman.sync()
+# Pacman.sync(): one -Syy per boot, run by a oneshot unit whose
+# RemainAfterExit success is the latch — a blocking start from any process
+# after the first is a state query, not a resync.
 pacman_sync() {
-  ((PACMAN_SYNCED)) && return 0
-  if ! pacman_run -Syy; then
-    if [[ ${SYS_CMD_OUTPUT,,} == *gpgme* || ${SYS_CMD_OUTPUT,,} == *keyring* ]]; then
-      warn 'Pacman sync failed with keyring error, attempting keyring reinit'
-      pacman_reinit_keyring
-    fi
-    pacman_run -Syy || die "Could not sync a new package database: $SYS_CMD_OUTPUT"
-  fi
-  PACMAN_SYNCED=1
+  systemctl start "$PACMAN_SYNC_UNIT" ||
+    die "Could not sync a new package database: $(journalctl --no-pager -o cat -b -u "$PACMAN_SYNC_UNIT" 2>/dev/null | tail -n 3 | tr '\n' ' ')"
 }
 
 # Whether pacman's local db in the target records $2 as installed.
