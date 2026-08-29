@@ -6,10 +6,11 @@ Description=Verify the offline mirror on the install medium
 # leaves someone with neither their old system nor a working new one.
 #
 # Started at boot so the hashing happens while the user works through the
-# wizard, and ordered after the root image hash because two readers on one USB
-# stick seek against each other -- the same reason the wizard's prefetch waits
-# for it.
-After=omarchy-root-image-verify.service
+# wizard, and first of the boot readers: the root image hash runs last so the
+# stream is the freshest thing in the page cache when the receive consumes it
+# (measured on a 6 GB X200: a cache-warm stream cut the image phase from
+# ~213 s to 122 s), and a bad flash usually corrupts broadly, so hashing the
+# smaller artifact first also surfaces the re-flash verdict sooner.
 ConditionPathIsDirectory=/var/cache/omarchy/mirror/offline
 RequiresMountsFor=/var/cache/omarchy/mirror/offline
 

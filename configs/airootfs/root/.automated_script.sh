@@ -82,34 +82,45 @@ warm_offline_mirror() {
   budget_kb=$(($(awk '/^MemAvailable:/ { print $2 }' /proc/meminfo) / 2))
   ((budget_kb > 262144)) || return 0
 
-  # omarchy-root-image-verify.service (started at boot) reads the whole image
-  # front to back as it hashes it, and two readers on one USB stick seek
-  # against each other: let it finish first. Its pass is the warm-up for the
-  # image too; the head read below is then a cache hit where the image fit,
-  # and re-warms the front where a small budget made the kernel drop it.
-  while [[ $(systemctl is-active omarchy-root-image-verify.service 2>/dev/null) == activating ]]; do
+  # The boot verifies read everything once already (mirror and sync first,
+  # the image hash last so the stream is freshest for the receive -- the
+  # order this function must not undo). Two readers on one USB stick seek
+  # against each other: wait for the image hash, the tail of that chain.
+  # While it queues behind the readers before it, is-active says
+  # "inactive", not "activating" -- the pending start job is the tell, and
+  # without that check this loop falls straight through at boot. A unit
+  # skipped by its conditions leaves no job and never activates, so this
+  # cannot wait forever.
+  while [[ $(systemctl is-active omarchy-root-image-verify.service 2>/dev/null) == activating ]] ||
+    systemctl list-jobs --no-legend 2>/dev/null | grep -q omarchy-root-image-verify; do
     sleep 1
   done
 
-  # The image first, and only as much of it as fits: btrfs receive reads it
-  # front to back, so the leading bytes are the ones worth having cached.
+  # The image head gets the budget first -- btrfs receive reads the stream
+  # front to back, so its leading bytes are the ones worth having cached --
+  # but it is read LAST below, so on machines where the budget forces
+  # eviction it is the mirror that goes, not the stream.
+  local image_kb=0
   if [[ -f $image ]]; then
-    size_kb=$(du -k -- "$image" | cut -f1)
-    ((size_kb > budget_kb)) && size_kb=$budget_kb
-    head -c "$((size_kb * 1024))" -- "$image" >/dev/null 2>&1 || true
-    spent_kb=$size_kb
+    image_kb=$(du -k -- "$image" | cut -f1)
+    ((image_kb > budget_kb)) && image_kb=$budget_kb
+    spent_kb=$image_kb
   fi
 
-  [[ -d $mirror ]] || return 0
+  # The mirror on the leftover budget, largest first: when it cannot cover
+  # all of it this still front-loads the bytes that dominate.
+  if [[ -d $mirror ]]; then
+    local path
+    while read -r size_kb path; do
+      ((spent_kb + size_kb > budget_kb)) && continue
+      cat -- "$path" >/dev/null 2>&1 || true
+      spent_kb=$((spent_kb + size_kb))
+    done < <(du -k "$mirror"/*.pkg.tar.zst 2>/dev/null | sort -rn)
+  fi
 
-  # Then the mirror, largest first: when the budget cannot cover all of it
-  # this still front-loads the bytes that dominate.
-  local path
-  while read -r size_kb path; do
-    ((spent_kb + size_kb > budget_kb)) && continue
-    cat -- "$path" >/dev/null 2>&1 || true
-    spent_kb=$((spent_kb + size_kb))
-  done < <(du -k "$mirror"/*.pkg.tar.zst 2>/dev/null | sort -rn)
+  # And the stream's head last, freshest in the cache: a cache hit where the
+  # verify's pass survived, a re-warm of the front where it did not.
+  ((image_kb > 0)) && head -c "$((image_kb * 1024))" -- "$image" >/dev/null 2>&1 || true
 }
 
 warm_offline_mirror &

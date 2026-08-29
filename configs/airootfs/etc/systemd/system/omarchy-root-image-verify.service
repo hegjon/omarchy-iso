@@ -17,6 +17,12 @@ Description=Verify the Omarchy install payload on the install medium
 # This is the only verifier: the orchestrator's prepare_install_target phase
 # collects the verdict, waits for the unit if it is still running, and fails
 # the install if it could not run.
+# Last of the boot readers -- one reader at a time on one USB stick, and the
+# receive consumes this stream the moment the install starts, so it is read
+# last to be freshest in the page cache (After= is ordering only: a failed
+# mirror verify or sync does not block this hash, the pre-flight gate is
+# what judges them).
+After=omarchy-mirror-verify.service omarchy-pacman-sync.service
 # Order after the boot medium's mount: the conditions below are evaluated at
 # start, and without this a not-yet-mounted medium would skip the unit
 # silently instead of waiting -- the gate would then say "will not run".
