@@ -2,37 +2,6 @@
 # What main()'s finally did in Python: CPU governors, bind mounts, hook masks
 # and the protected target are put back on every exit path. All idempotent.
 
-CPU_SYSFS=${CPU_SYSFS:-/sys/devices/system/cpu}
-declare -gA CPU_GOVERNORS=()
-
-# Run the live CPUs flat out for the install.
-#
-# Package extraction and the UKI build are both CPU-bound, and archiso boots
-# on whatever governor the kernel defaults to. Writing an unsupported governor
-# just fails, so nothing needs probing first, and hosts without cpufreq (most
-# VMs) have no paths at all.
-boost_cpu_governor() {
-  local path current
-  for path in "$CPU_SYSFS"/cpu*/cpufreq/scaling_governor; do
-    [[ -f $path ]] || continue
-    current=$(<"$path") || continue
-    printf 'performance\n' >"$path" 2>/dev/null || continue
-    CPU_GOVERNORS[$path]=$current
-  done
-  ((${#CPU_GOVERNORS[@]})) && info "› CPU governor set to performance (${#CPU_GOVERNORS[@]} CPUs)"
-  return 0
-}
-
-# Only matters when an install fails and the user keeps using the live
-# environment — a successful one reboots out of it.
-restore_cpu_governors() {
-  local path
-  for path in "${!CPU_GOVERNORS[@]}"; do
-    printf '%s\n' "${CPU_GOVERNORS[$path]}" >"$path" 2>/dev/null || true
-  done
-  return 0
-}
-
 cleanup_bind_mounts() {
   local mount_point
   for mount_point in "${CTX_BIND_MOUNTS[@]}"; do
@@ -97,7 +66,11 @@ orchestrator_on_exit() {
       [[ $status -ne 0 ]] || status=1
     fi
   fi
-  restore_cpu_governors
+  # Stopping the target is the group abort and the governor restore in one:
+  # PartOf= takes down any running phase unit cgroup-complete, and the CPU
+  # boost unit's ExecStop puts the saved governors back. Idempotent when
+  # nothing is running.
+  systemctl stop omarchy-install.target >/dev/null 2>&1 || true
   # No-op after a completed install (create_factory_snapshot joined it); on a
   # failure it ends the unit before the target is torn down.
   stop_target_keyring_init

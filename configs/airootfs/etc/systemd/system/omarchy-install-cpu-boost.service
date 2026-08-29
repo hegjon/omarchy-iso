@@ -1,0 +1,14 @@
+[Unit]
+Description=Run the CPUs flat out for the install
+# Pulled in by omarchy-install.target (its Wants=) when the orchestrator
+# starts the target — the graph's first start edge. RemainAfterExit holds
+# this active for the install's lifetime; stopping the target (the failure
+# path's group abort, or any stop) runs ExecStop, which restores the saved
+# governors. A successful install reboots out of the live system anyway.
+PartOf=omarchy-install.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/omarchy-install-cpu-governor boost
+ExecStop=/usr/local/bin/omarchy-install-cpu-governor restore

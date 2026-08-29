@@ -52,6 +52,7 @@ file_permissions=(
   # drops file modes on copy, so the executables must be declared here too.
   ["/usr/share/archinstall-bash/bin/archinstall"]="0:0:755"
   ["/usr/share/omarchy-iso/orchestrator/run-phase"]="0:0:755"
+  ["/usr/local/bin/omarchy-install-cpu-governor"]="0:0:755"
   # Mount point only; var-cache-omarchy-mirror-offline.mount puts the mirror
   # image over it at boot.
   ["/var/cache/omarchy/mirror/offline/"]="0:0:755"

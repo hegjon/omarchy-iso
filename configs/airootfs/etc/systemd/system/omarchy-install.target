@@ -1,5 +1,6 @@
 [Unit]
 Description=Omarchy installation
+Wants=omarchy-install-cpu-boost.service
 # The umbrella for the install's systemd-run phases. The orchestrator starts
 # it when an install begins; phase units (and the keyring init) declare
 # PartOf= it, so `systemctl stop omarchy-install.target` is a group abort

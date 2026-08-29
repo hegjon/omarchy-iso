@@ -72,6 +72,8 @@ main() {
 
   # The umbrella for the systemd-run phases: parts declare PartOf= it, so
   # stopping it is the group abort that takes any running phase's cgroup.
+  # Starting it also pulls the CPU boost unit (the target's Wants=), whose
+  # ExecStop restores the governors when the target stops.
   systemctl start omarchy-install.target >/dev/null 2>&1 || true
 
   trap 'orchestrator_on_err "$?" "$BASH_COMMAND" "${BASH_SOURCE[0]}" "$LINENO"' ERR
@@ -79,7 +81,6 @@ main() {
   trap orchestrator_on_interrupt INT TERM
 
   arch_init_library
-  boost_cpu_governor
   build_phases
   phases_run
 

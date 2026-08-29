@@ -192,6 +192,40 @@ prepare_target_unit_wired() {
 }
 check "the pre-flight gate is wired as a pre-format unit" prepare_target_unit_wired
 
+# The CPU boost: pulled by the target's Wants=, restored by its ExecStop —
+# boost and restore run in different processes, so the mechanics are driven
+# against a fake sysfs to prove the state file carries the governors across.
+cpu_boost_wired() {
+  local unit="$UNITS/omarchy-install-cpu-boost.service"
+  grep -qxF 'Wants=omarchy-install-cpu-boost.service' "$UNITS/omarchy-install.target" &&
+  grep -qxF 'PartOf=omarchy-install.target' "$unit" &&
+  grep -qxF 'RemainAfterExit=yes' "$unit" &&
+  grep -qxF 'ExecStart=/usr/local/bin/omarchy-install-cpu-governor boost' "$unit" &&
+  grep -qxF 'ExecStop=/usr/local/bin/omarchy-install-cpu-governor restore' "$unit"
+}
+check "the CPU boost unit is wired to the target" cpu_boost_wired
+
+cpu_governor_mechanics() {
+  local d
+  d=$(mktemp -d) || return 1
+  mkdir -p "$d/sys/cpu0/cpufreq" "$d/sys/cpu1/cpufreq"
+  printf 'schedutil\n' >"$d/sys/cpu0/cpufreq/scaling_governor"
+  printf 'powersave\n' >"$d/sys/cpu1/cpufreq/scaling_governor"
+  CPU_SYSFS="$d/sys" OMARCHY_INSTALL_STATE_DIR="$d/state" \
+    "$ROOT/configs/airootfs/usr/local/bin/omarchy-install-cpu-governor" boost >/dev/null &&
+  [[ $(<"$d/sys/cpu0/cpufreq/scaling_governor") == performance ]] &&
+  [[ $(<"$d/sys/cpu1/cpufreq/scaling_governor") == performance ]] &&
+  CPU_SYSFS="$d/sys" OMARCHY_INSTALL_STATE_DIR="$d/state" \
+    "$ROOT/configs/airootfs/usr/local/bin/omarchy-install-cpu-governor" restore &&
+  [[ $(<"$d/sys/cpu0/cpufreq/scaling_governor") == schedutil ]] &&
+  [[ $(<"$d/sys/cpu1/cpufreq/scaling_governor") == powersave ]] &&
+  [[ ! -e $d/state/cpu-governors ]]
+  local rc=$?
+  rm -rf "$d"
+  return $rc
+}
+check "boost and restore carry the governors through the state file" cpu_governor_mechanics
+
 # run-phase itself: sourceable main.sh, dispatch, refusals — including the
 # destruction boundary, which must fail loudly rather than skip.
 check "sourcing main.sh defines but does not run the install" \
