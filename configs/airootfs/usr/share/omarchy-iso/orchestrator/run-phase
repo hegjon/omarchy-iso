@@ -47,6 +47,11 @@ fi
 run_phase_cleanup() {
   local status=$? mount_point
   ((status != 0)) || return 0
+  # The phase's own words, for the orchestrator's failure message: fail()
+  # recorded them in this process, and the journal buries them under
+  # sha256sum output and systemd's exit lines — hand them over directly.
+  [[ -z ${ORCH_LAST_ERROR:-} ]] ||
+    printf '%s' "$ORCH_LAST_ERROR" >"$CTX_STATE_DIR/phase-error" 2>/dev/null
   for mount_point in "${CTX_BIND_MOUNTS[@]}"; do
     umount "$mount_point" >/dev/null 2>&1 || true
   done

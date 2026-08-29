@@ -344,9 +344,17 @@ receive_root_image() {
 # process rebuilds the context from the env files ctx_write_runtime_env
 # persisted, and its output lands in the journal — quoted here on failure.
 run_phase_unit() { # unit, human description
-  local unit=$1 what=$2
-  systemctl start "$unit" ||
-    fail "$what failed ($(systemctl show -p Result --value "$unit" 2>/dev/null)): $(journalctl --no-pager -o cat -b -u "$unit" 2>/dev/null | tail -n 5 | tr '\n' ' ')"
+  local unit=$1 what=$2 detail
+  rm -f "$CTX_STATE_DIR/phase-error"
+  if ! systemctl start "$unit"; then
+    # Prefer the phase's own fail() message, handed over via the state dir:
+    # the journal buries it under command output and systemd's exit lines
+    # (the corrupt-medium re-flash advice was lost to exactly that).
+    detail=$(cat "$CTX_STATE_DIR/phase-error" 2>/dev/null)
+    [[ -n $detail ]] ||
+      detail=$(journalctl --no-pager -o cat -b -u "$unit" 2>/dev/null | tail -n 5 | tr '\n' ' ')
+    fail "$what failed ($(systemctl show -p Result --value "$unit" 2>/dev/null)): $detail"
+  fi
 }
 
 TARGET_KEYRING_UNIT=omarchy-target-keyring.service

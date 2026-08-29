@@ -245,6 +245,44 @@ cleanup_trap_mechanics() {
 }
 check "run-phase unmounts the phase's stage mounts on a failing exit only" cleanup_trap_mechanics
 
+# And hands the phase's own fail() message to the orchestrator through the
+# state dir — the journal buries it under command output and systemd's exit
+# lines, which is exactly how the re-flash advice got lost once.
+error_handover() {
+  local d got
+  d=$(mktemp -d) || return 1
+  sed -n '/^run_phase_cleanup() {/,/^}/p' "$ORCH/run-phase" >"$d/fn.sh"
+  bash -c '
+    umount() { :; }
+    source "'"$d"'/fn.sh"
+    CTX_STATE_DIR="'"$d"'"; CTX_BIND_MOUNTS=()
+    ORCH_LAST_ERROR="install medium is corrupt: re-flash it"
+    (exit 1); run_phase_cleanup
+  '
+  got=$(cat "$d/phase-error" 2>/dev/null)
+  rm -rf "$d"
+  [[ $got == "install medium is corrupt: re-flash it" ]]
+}
+check "run-phase hands the phase's fail message over on a failing exit" error_handover
+
+run_phase_unit_prefers_handover() {
+  local d out
+  d=$(mktemp -d) || return 1
+  out=$(bash -c '
+    # The unit writes the handover file on its way down, after run_phase_unit
+    # cleared any stale one — the stub mirrors that sequence.
+    systemctl() { [[ $1 == start ]] && { printf "install medium is too slow: try another USB stick" >"$CTX_STATE_DIR/phase-error"; return 1; }; echo mocked; }
+    journalctl() { echo "systemd noise only"; }
+    fail() { echo "FAIL:$*"; exit 1; }
+    CTX_STATE_DIR="'"$d"'"
+    '"$(sed -n '/^run_phase_unit() {/,/^}/p' "$ORCH/root_image.sh")"'
+    run_phase_unit some.unit "the gate"
+  ' 2>&1)
+  rm -rf "$d"
+  [[ $out == *"install medium is too slow"* && $out != *"systemd noise"* ]]
+}
+check "run_phase_unit prefers the handed-over message to the journal" run_phase_unit_prefers_handover
+
 # The property the deferred-encrypted flavor of that phase depends on: the
 # generated LUKS passphrase is generated once and reused by every later
 # context rebuild — two separate processes must agree on it.
