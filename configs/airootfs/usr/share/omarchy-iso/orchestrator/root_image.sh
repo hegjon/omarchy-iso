@@ -148,19 +148,23 @@ verify_unit_property() {
 }
 
 # Byte offset of the hasher's open fd on the stream: the unit's MainPID is
-# sha256sum while it runs, and fdinfo's pos is how far it has read.
+# the stall watchdog and sha256sum its direct child, so both are candidates,
+# and fdinfo's pos is how far the holder has read.
 hasher_read_pos() {
-  local pid fd target pos
-  pid=$(verify_unit_property MainPID)
-  [[ $pid =~ ^[0-9]+$ && $pid != 0 ]] || return 0
-  for fd in "/proc/$pid/fd"/*; do
-    target=$(readlink -f "$fd" 2>/dev/null) || continue
-    [[ $target == "$ROOT_IMAGE_STREAM" ]] || continue
-    # || true: the hasher can exit between the MainPID read and this one,
-    # and an awk that cannot open the file exits 2, which set -eE would turn
-    # into a failed phase.
-    pos=$(awk '/^pos:/ { print $2; exit }' "/proc/$pid/fdinfo/${fd##*/}" 2>/dev/null || true)
-    [[ -n $pos ]] && { printf '%s' "$pos"; return 0; }
+  local mainpid pid pids fd target pos
+  mainpid=$(verify_unit_property MainPID)
+  [[ $mainpid =~ ^[0-9]+$ && $mainpid != 0 ]] || return 0
+  pids=("$mainpid" $(cat "/proc/$mainpid/task"/*/children 2>/dev/null))
+  for pid in "${pids[@]}"; do
+    for fd in "/proc/$pid/fd"/*; do
+      target=$(readlink -f "$fd" 2>/dev/null) || continue
+      [[ $target == "$ROOT_IMAGE_STREAM" ]] || continue
+      # || true: the hasher can exit between the MainPID read and this one,
+      # and an awk that cannot open the file exits 2, which set -eE would turn
+      # into a failed phase.
+      pos=$(awk '/^pos:/ { print $2; exit }' "/proc/$pid/fdinfo/${fd##*/}" 2>/dev/null || true)
+      [[ -n $pos ]] && { printf '%s' "$pos"; return 0; }
+    done
   done
   return 0
 }

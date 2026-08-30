@@ -28,8 +28,8 @@ check() { # desc, expected_rc, actual_rc, [needle in output], [output]
 # newline-separated ActiveState values `systemctl show ... ActiveState` returns
 # on successive calls (last one repeats); LOADSTATE, START_RC and RESULT (the
 # unit's Result property, exit-code unless overridden) tune the rest.
-run_helper() { # loadstate, active_seq, start_rc, [result]  ->  sets RC and OUT
-  local loadstate=$1 active_seq=$2 start_rc=$3 result=${4:-exit-code}
+run_helper() { # loadstate, active_seq, start_rc, [result], [exec_status]  ->  sets RC and OUT
+  local loadstate=$1 active_seq=$2 start_rc=$3 result=${4:-exit-code} exec_status=${5:-1}
   local box; box=$(mktemp -d)
   mkdir -p "$box/bin" "$box/medium/arch/x86_64" "$box/sys/block/sdz/queue"
   : >"$box/medium/arch/x86_64/omarchy-root.btrfs.zst"
@@ -64,10 +64,11 @@ EOF
   # systemctl show -p LoadState|ActiveState --value ; systemctl start ...
   cat >"$box/bin/systemctl" <<EOF
 #!/bin/bash
-box="$box"; start_rc=$start_rc; loadstate="$loadstate"; result="$result"; mainpid=$mainpid
+box="$box"; start_rc=$start_rc; loadstate="$loadstate"; result="$result"; mainpid=$mainpid; exec_status=$exec_status
 if [[ \$1 == show ]]; then
   case "\$*" in
     *LoadState*)  echo "\$loadstate" ;;
+    *ExecMainStatus*) echo "\$exec_status" ;;
     *Result*)     echo "\$result" ;;
     *MainPID*)    echo "\$mainpid" ;;
     *ActiveState*)
@@ -141,6 +142,13 @@ check "failed unit is a corrupt medium" 1 "$RC" "install medium is corrupt: re-f
 # advice -- re-flashing the same stick would not help.
 run_helper loaded "failed" 0 timeout
 check "timed-out unit is a slow medium" 1 "$RC" "install medium is too slow" "$OUT"
+
+# The stall watchdog killed a hash whose reads stopped advancing (exit 75):
+# the same slow-medium advice, reached in seconds instead of minutes, and
+# named as a stall rather than a size timeout or a corrupt image.
+run_helper loaded "failed" 0 exit-code 75
+check "a stall-killed unit is a slow medium" 1 "$RC" "install medium is too slow" "$OUT"
+check "a stall names itself" 1 "$RC" "stalled: the medium stopped returning data" "$OUT"
 
 # systemd stops a timed-out unit before it settles into failed, so the wait
 # passes through deactivating. Waiting that out is what keeps the slow-medium

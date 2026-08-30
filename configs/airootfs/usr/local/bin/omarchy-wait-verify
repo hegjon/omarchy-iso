@@ -40,25 +40,29 @@ fail() { echo "$1" >&2; exit 1; }
 [[ -n $UNIT && -n $SUBJECT ]] || fail "usage: omarchy-wait-verify UNIT SUBJECT [STREAM]"
 
 # How far the hasher has read, as an integer percent: the unit's MainPID is
-# sha256sum while it runs, and its fdinfo pos on the stream is the byte
-# offset (the same source the orchestrator mirrors into the dashboard). The
-# stream is all but a couple of megabytes of what the unit hashes -- the repo
-# databases it also covers are noise beside it -- so the stream's own fraction
-# is the progress. Fails silently between opens or once the unit is done;
-# callers just skip that sample.
+# the stall watchdog and the hasher its direct child, so both are candidates
+# for the fd holding the stream, and its fdinfo pos is the byte offset (the
+# same source the orchestrator mirrors into the dashboard). The stream is all
+# but a couple of megabytes of what the unit hashes -- the repo databases it
+# also covers are noise beside it -- so the stream's own fraction is the
+# progress. Fails silently between opens or once the unit is done; callers
+# just skip that sample.
 hash_pct() {
-  local pid fd pos size
-  pid=$(systemctl show "$UNIT" -p MainPID --value 2>/dev/null)
-  [[ $pid =~ ^[0-9]+$ && $pid -gt 0 ]] || return 1
+  local mainpid pid pids fd pos size
+  mainpid=$(systemctl show "$UNIT" -p MainPID --value 2>/dev/null)
+  [[ $mainpid =~ ^[0-9]+$ && $mainpid -gt 0 ]] || return 1
   [[ -n $STREAM ]] || return 1
   size=$(stat -c %s "$STREAM" 2>/dev/null) || return 1
   ((size > 0)) || return 1
-  for fd in /proc/"$pid"/fd/*; do
-    [[ $(readlink "$fd" 2>/dev/null) == "$STREAM" ]] || continue
-    # || true: the hasher can finish mid-sample, and awk exits 2 on a file
-    # that vanished; an empty pos is the case the caller already expects.
-    pos=$(awk '/^pos:/ {print $2; exit}' "/proc/$pid/fdinfo/${fd##*/}" 2>/dev/null || true)
-    [[ -n $pos ]] && { echo $((pos * 100 / size)); return 0; }
+  pids=("$mainpid" $(cat /proc/"$mainpid"/task/*/children 2>/dev/null))
+  for pid in "${pids[@]}"; do
+    for fd in /proc/"$pid"/fd/*; do
+      [[ $(readlink "$fd" 2>/dev/null) == "$STREAM" ]] || continue
+      # || true: the hasher can finish mid-sample, and awk exits 2 on a file
+      # that vanished; an empty pos is the case the caller already expects.
+      pos=$(awk '/^pos:/ {print $2; exit}' "/proc/$pid/fdinfo/${fd##*/}" 2>/dev/null || true)
+      [[ -n $pos ]] && { echo $((pos * 100 / size)); return 0; }
+    done
   done
   return 1
 }
@@ -118,6 +122,12 @@ while :; do
       # re-flashing the same stick is not the advice.
       if [[ "$(systemctl show "$UNIT" -p Result --value 2>/dev/null)" == timeout ]]; then
         fail "install medium is too slow: try another USB stick or port"$'\n'"reading $SUBJECT did not finish within its size-based timeout"
+      fi
+      # ExecMainStatus 75: omarchy-stall-watchdog killed a hash whose reads
+      # stopped advancing. The medium went silent mid-read -- same advice as
+      # the timeout, reached in seconds instead of the size-based minutes.
+      if [[ "$(systemctl show "$UNIT" -p ExecMainStatus --value 2>/dev/null)" == 75 ]]; then
+        fail "install medium is too slow: try another USB stick or port"$'\n'"reading $SUBJECT stalled: the medium stopped returning data"
       fi
       # The dashboard centres each line in ~80 columns, so the action comes
       # first and on its own line; the journal tail (the hasher's own output)

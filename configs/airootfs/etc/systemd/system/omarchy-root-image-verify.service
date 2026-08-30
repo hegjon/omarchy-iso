@@ -40,7 +40,11 @@ RemainAfterExit=yes
 # forever. On timeout Result=timeout tells the wait helper to report a slow
 # medium rather than a corrupt one.
 WorkingDirectory=/run/archiso/bootmnt/arch/x86_64
-ExecStart=/usr/bin/sha256sum --check --strict omarchy-root.btrfs.zst.sha256
+# The stall watchdog is the fast path beside the size timeout above: a
+# medium that stops answering outright is named in ~30 s (the wrapper kills
+# the hash and exits 75, which the wait helper reads as the slow-medium
+# verdict), where the size timeout still owns the slow-but-alive case.
+ExecStart=/usr/local/bin/omarchy-stall-watchdog /usr/bin/sha256sum --check --strict omarchy-root.btrfs.zst.sha256
 # Background work: never compete with the console or anything interactive.
 Nice=15
 IOSchedulingClass=idle
