@@ -57,75 +57,11 @@ if [[ ${OMARCHY_INSTALL_DEBUG:-} == "1" ]]; then
   echo "================================"
 fi
 
-# Warm the page cache for the root image and bundled packages while the user
-# works through the wizard. The install streams a multi-GB root image into
-# btrfs receive and then pacstraps a few packages out of the offline mirror;
-# on media slower than the unpack the install is read-bound and every byte
-# cached here is a byte it never waits for. On faster media this costs nothing but
-# otherwise-idle bandwidth: the medium is untouched while the user types, and
-# the target disk it writes to later is a different device.
-#
-# Clean page cache only, so the kernel reclaims it under pressure instead of
-# OOMing, and a budget so small machines never evict what was just warmed.
-# Set OMARCHY_NO_PREFETCH=1 to A/B the same ISO with this disabled.
-warm_offline_mirror() {
-  local budget_kb spent_kb=0 size_kb
-  # The orchestrator's ROOT_IMAGE_STREAM.
-  local image=/run/archiso/bootmnt/arch/x86_64/omarchy-root.btrfs.zst
-  # The mirror as it lies on the medium: its own directory in the ISO9660 tree,
-  # read here rather than through the bind mount so this works whether or not
-  # the mount unit has come up yet.
-  local mirror=/run/archiso/bootmnt/arch/x86_64/mirror
-
-  [[ ${OMARCHY_NO_PREFETCH:-} == 1 ]] && return 0
-
-  budget_kb=$(($(awk '/^MemAvailable:/ { print $2 }' /proc/meminfo) / 2))
-  ((budget_kb > 262144)) || return 0
-
-  # The boot verifies read everything once already (mirror and sync first,
-  # the image hash last so the stream is freshest for the receive -- the
-  # order this function must not undo). Two readers on one USB stick seek
-  # against each other: wait for the image hash, the tail of that chain.
-  # While it queues behind the readers before it, is-active says
-  # "inactive", not "activating" -- the pending start job is the tell, and
-  # without that check this loop falls straight through at boot. A unit
-  # skipped by its conditions leaves no job and never activates, so this
-  # cannot wait forever.
-  while [[ $(systemctl is-active omarchy-root-image-verify.service 2>/dev/null) == activating ]] ||
-    systemctl list-jobs --no-legend 2>/dev/null | grep -q omarchy-root-image-verify; do
-    sleep 1
-  done
-
-  # The image head gets the budget first -- btrfs receive reads the stream
-  # front to back, so its leading bytes are the ones worth having cached --
-  # but it is read LAST below, so on machines where the budget forces
-  # eviction it is the mirror that goes, not the stream.
-  local image_kb=0
-  if [[ -f $image ]]; then
-    image_kb=$(du -k -- "$image" | cut -f1)
-    ((image_kb > budget_kb)) && image_kb=$budget_kb
-    spent_kb=$image_kb
-  fi
-
-  # The mirror on the leftover budget, largest first: when it cannot cover
-  # all of it this still front-loads the bytes that dominate.
-  if [[ -d $mirror ]]; then
-    local path
-    while read -r size_kb path; do
-      ((spent_kb + size_kb > budget_kb)) && continue
-      cat -- "$path" >/dev/null 2>&1 || true
-      spent_kb=$((spent_kb + size_kb))
-    done < <(du -k "$mirror"/*.pkg.tar.zst 2>/dev/null | sort -rn)
-  fi
-
-  # And the stream's head last, freshest in the cache: a cache hit where the
-  # verify's pass survived, a re-warm of the front where it did not.
-  ((image_kb > 0)) && head -c "$((image_kb * 1024))" -- "$image" >/dev/null 2>&1 || true
-}
-
-warm_offline_mirror &
-warm_pid=$!
-trap 'kill "$warm_pid" 2>/dev/null' EXIT
+# The install-payload prefetch (page-cache warm of the root image head and
+# the offline mirror) runs as omarchy-prefetch.service: systemd's ordering
+# holds it behind the boot verifies -- the wait this script used to poll for
+# -- and the unit's idle-class I/O yields the medium to whoever the user is
+# waiting on. Boot with omarchy.no_prefetch to A/B the same ISO without it.
 
 cd /root
 # Autoinstall: a cidata drive carrying the configurator's own output files
