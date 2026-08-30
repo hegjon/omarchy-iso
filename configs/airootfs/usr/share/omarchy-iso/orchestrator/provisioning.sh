@@ -256,7 +256,7 @@ authorized_keys() {
 # chroot, so the install only stages: the key, the enabled services, and a
 # first-boot unit that performs the join once the network is really there.
 # The package itself was installed from the offline mirror during
-# arch_install_system -- nothing is fetched at boot.
+# install_system_payload -- nothing is fetched at boot.
 # ─────────────────────────────────────────────────────────────────────────────
 
 TAILSCALE_AUTHKEY_TARGET=/etc/tailscale/authkey

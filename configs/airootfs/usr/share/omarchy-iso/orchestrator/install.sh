@@ -133,7 +133,7 @@ prepare_install_target_unit() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# arch_install_system: archinstall-bash partitions and mounts per the
+# The Arch install: archinstall-bash partitions and mounts per the
 # configurator JSON, the root image is unpacked onto the mounted layout, and
 # the library finishes with the per-machine package delta, users, and fstab.
 #
@@ -143,23 +143,38 @@ prepare_install_target_unit() {
 # input.
 # ─────────────────────────────────────────────────────────────────────────────
 
-arch_install_system() {
-  arch_load_config
+# What one function used to run as arch_install_system, split along
+# its natural seams into unit-hosted phases (run-phase provides
+# arch_load_config to each): the disk layout (pre-target, so its unit opts
+# out of run-phase's mounted-target guard), the image unpack (its unit
+# predates the split), the package payload (everything that needs the
+# offline cache mounted and the boot hooks masked), and the base finishers.
+# The order across the seams is exactly the old function's order.
 
+install_disk_layout() {
   if ! disk_is_pre_mount; then
     info '› partitioning + formatting + encrypting'
     fs_perform_filesystem_operations
     info '› mounting the layout'
     installer_mount_ordered_layout
   fi
+  # What this phase discovered (device nodes, the UUIDs mkfs assigned) and
+  # every later phase reads travels through run-phase's library-state
+  # handoff -- see LIBRARY_STATE_VARS there.
+}
 
-  # Before anything writes into the target: the image replaces the (empty)
-  # root subvolume the installer created, and everything written there first
-  # would go with it. The first phase migrated to a systemd unit
-  # (omarchy-install.target is the umbrella): run-phase hosts
-  # install_root_image in the unit's own process.
+install_disk_layout_unit() {
+  run_phase_unit omarchy-install-disk.service 'disk layout'
+}
+
+# Before anything writes into the target: the image replaces the (empty)
+# root subvolume the installer created, and everything written there first
+# would go with it.
+unpack_root_image_unit() {
   run_phase_unit omarchy-install-image.service 'root image unpack'
+}
 
+install_system_payload() {
   if [[ $CFG_HAS_MIRROR_CONFIG == true ]]; then
     installer_set_mirrors live
   fi
@@ -210,10 +225,16 @@ arch_install_system() {
   unmount_offline_package_cache
 
   # After the last pacstrap: each one runs its own pacman-key --init on the
-  # target's gnupg dir. Runs on while the phases below configure the target;
-  # create_factory_snapshot joins it.
+  # target's gnupg dir. Runs on while the phases after this one configure
+  # the target; create_factory_snapshot joins it.
   start_target_keyring_init
+}
 
+install_system_payload_unit() {
+  run_phase_unit omarchy-install-strap.service 'system payload'
+}
+
+finalize_base_system() {
   # Standard arch finishers.
   [[ -n $CFG_TIMEZONE ]] && { installer_set_timezone "$CFG_TIMEZONE" || true; }
   if [[ $CFG_NTP == true ]]; then
@@ -228,6 +249,10 @@ arch_install_system() {
   fi
 
   installer_finish
+}
+
+finalize_base_system_unit() {
+  run_phase_unit omarchy-install-base.service 'base finishers'
 }
 
 # Let pacstrap consume bundled packages without copying them first.

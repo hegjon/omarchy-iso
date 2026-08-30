@@ -12,7 +12,14 @@ CFG_HAS_MIRROR_CONFIG=true CFG_SWAP_ENABLED=true CFG_HAS_APP_CONFIG=true
 CFG_TIMEZONE=UTC CFG_NTP=true CFG_ROOT_ENC_PASSWORD='$y$hash' USER_NAME=(jeff) PRE_MOUNT=false
 arch_load_config() { record arch_load_config; }
 disk_is_pre_mount() { [[ $PRE_MOUNT == true ]]; }
-for fn in fs_perform_filesystem_operations installer_mount_ordered_layout installer_set_mirrors \
+# The disk phase persists what formatting discovered; the stub discovers
+# like the real one so the handoff to later phase processes is testable.
+fs_perform_filesystem_operations() {
+  record fs_perform_filesystem_operations
+  PART_DEVPATH=(/dev/vda1 /dev/vda2) PART_PARTN=(1 2)
+  PART_PARTUUID=(1111-aaaa 2222-bbbb) PART_UUID=(3333-cccc 4444-dddd)
+}
+for fn in installer_mount_ordered_layout installer_set_mirrors \
           installer_minimal_installation installer_setup_swap installer_create_users applications_install \
           installer_add_additional_packages installer_set_timezone installer_activate_time_synchronization \
           installer_set_user_password installer_genfstab installer_finish \
@@ -32,43 +39,89 @@ reset() {
 }
 steps() { calls | tr '\n' ';'; }
 
+# The old single phase is now four: disk layout, image unpack (its own unit,
+# started by the phase loop), package payload, base finishers. The three
+# hosted functions run here in the loop's order; the image unit sits between
+# disk and payload by build_phases wiring, checked below by executing it.
+run_split() {
+  run_phase install_disk_layout &&
+    run_phase install_system_payload &&
+    run_phase finalize_base_system
+}
+
 section 'full-disk order'
-reset; run_phase arch_install_system
-check 'phase ok' eq "$?" 0
+reset; run_split
+check 'phases ok' eq "$?" 0
 check 'sequence' eq "$(steps)" \
-'arch_load_config;fs_perform_filesystem_operations;installer_mount_ordered_layout;run_phase_unit omarchy-install-image.service;installer_set_mirrors live;mount_offline_package_cache;mask /;installer_minimal_installation --no-mkinitcpio;installer_set_mirrors on_target;installer_setup_swap;configure_limine_boot;installer_create_users;applications_install;unmask /;unmount_offline_package_cache;start_target_keyring_init;installer_set_timezone UTC;installer_activate_time_synchronization;installer_set_user_password root $y$hash;installer_genfstab;installer_finish;'
+'fs_perform_filesystem_operations;installer_mount_ordered_layout;installer_set_mirrors live;mount_offline_package_cache;mask /;installer_minimal_installation --no-mkinitcpio;installer_set_mirrors on_target;installer_setup_swap;configure_limine_boot;installer_create_users;applications_install;unmask /;unmount_offline_package_cache;start_target_keyring_init;installer_set_timezone UTC;installer_activate_time_synchronization;installer_set_user_password root $y$hash;installer_genfstab;installer_finish;'
+
+section 'library-state handoff between phase processes'
+# The persist/restore pair extracted from run-phase, driven the way two
+# consecutive phase processes run them: the first persists what formatting
+# discovered and the ledger the pacstrap marked; the second starts with the
+# virgin ledger arch_init_library seeds and must get both back.
+handoff_roundtrip() {
+  local d rc=0
+  d=$(mktemp -d) || return 1
+  eval "$(sed -n '/^LIBRARY_STATE_VARS=/,/^}/p' "$ORCHESTRATOR/run-phase")"
+  (
+    CTX_STATE_DIR=$d
+    PART_PARTUUID=(1111-aaaa 2222-bbbb)
+    declare -A INST_HELPER_FLAGS=([base]=true [base-strapped]=true)
+    persist_library_state
+  )
+  (
+    CTX_STATE_DIR=$d
+    declare -A INST_HELPER_FLAGS=([base]=false)
+    source "$d/library-state.sh"
+    [[ ${INST_HELPER_FLAGS[base]} == true && ${PART_PARTUUID[1]} == 2222-bbbb ]]
+  ) || rc=1
+  rm -rf "$d"
+  return "$rc"
+}
+check 'library state survives the process boundary' handoff_roundtrip
 
 section 'invariants'
 check 'mkinitcpio deferred to the final UKI build' contains "$(steps)" 'installer_minimal_installation --no-mkinitcpio'
-check 'image unpacked before anything writes into the target' test "$(calls | grep -n '^run_phase_unit omarchy-install-image\|^mount_offline_package_cache' | cut -d: -f1 | tr '\n' ' ')" == '4 6 '
-check 'limine set up after the base delta, before useradd' test "$(calls | grep -n 'configure_limine_boot\|installer_create_users' | cut -d: -f1 | tr '\n' ' ')" == '11 12 '
-check 'package cache unmounted before genfstab' test "$(calls | grep -n 'unmount_offline_package_cache\|installer_genfstab' | cut -d: -f1 | tr '\n' ' ')" == '15 20 '
-check 'live hooks unmasked after the last pacstrap' test "$(calls | grep -n 'applications_install\|^unmask' | cut -d: -f1 | tr '\n' ' ')" == '13 14 '
-check 'keyring init started after the last pacstrap' test "$(calls | grep -n 'unmount_offline_package_cache\|start_target_keyring_init' | cut -d: -f1 | tr '\n' ' ')" == '15 16 '
+check 'limine set up after the base delta, before useradd' test "$(calls | grep -n 'configure_limine_boot\|installer_create_users' | cut -d: -f1 | tr '\n' ' ')" == '9 10 '
+check 'package cache unmounted before genfstab' test "$(calls | grep -n 'unmount_offline_package_cache\|installer_genfstab' | cut -d: -f1 | tr '\n' ' ')" == '13 18 '
+check 'live hooks unmasked after the last pacstrap' test "$(calls | grep -n 'applications_install\|^unmask' | cut -d: -f1 | tr '\n' ' ')" == '11 12 '
+check 'keyring init started after the last pacstrap' test "$(calls | grep -n 'unmount_offline_package_cache\|start_target_keyring_init' | cut -d: -f1 | tr '\n' ' ')" == '13 14 '
+
+section 'phase wiring'
+# Executes the real build_phases (extracted from main.sh, which the harness
+# does not source) with a recording add_phase: the image unit must sit
+# between the disk phase and the payload, and the finishers must follow.
+WIRED=()
+add_phase() { WIRED+=("$2"); }
+eval "$(sed -n '/^build_phases() {/,/^}/p' "$ORCHESTRATOR/main.sh")"
+build_phases
+check 'split phases wired in order' contains ";$(printf '%s;' "${WIRED[@]}")" \
+  ';install_disk_layout_unit;unpack_root_image_unit;install_system_payload_unit;finalize_base_system_unit;'
+unset -f add_phase build_phases
 
 section 'pre-mounted target'
-reset; PRE_MOUNT=true; run_phase arch_install_system
-check 'phase ok' eq "$?" 0
+reset; PRE_MOUNT=true; run_split
+check 'phases ok' eq "$?" 0
 check 'no disk steps' test -z "$(calls | grep 'fs_perform\|mount_ordered' || true)"
-check 'image still unpacked' test "$(calls | grep -c 'run_phase_unit omarchy-install-image')" == 1
 check 'own fstab instead of genfstab' test "$(calls | grep -c 'write_pre_mounted_fstab')" == 1 -a -z "$(calls | grep installer_genfstab || true)"
 check 'finish still last' eq "$(calls | tail -n1)" installer_finish
 
 section 'optional steps follow the configuration'
 reset; CFG_HAS_MIRROR_CONFIG=false CFG_SWAP_ENABLED=false CFG_HAS_APP_CONFIG=false CFG_TIMEZONE='' CFG_NTP=false CFG_ROOT_ENC_PASSWORD='' USER_NAME=()
-run_phase arch_install_system
-check 'phase ok' eq "$?" 0
+run_split
+check 'phases ok' eq "$?" 0
 for absent in installer_set_mirrors installer_setup_swap applications_install installer_create_users installer_set_timezone installer_activate_time_synchronization installer_set_user_password; do
   check "no $absent" test -z "$(calls | grep "^$absent" || true)"
 done
 
 section 'tailscale package when an auth key is staged'
-reset; CTX_TAILSCALE_AUTHKEY_PATH="$TMP/authkey"; run_phase arch_install_system
-check 'installed while the mirror is mounted' test "$(calls | grep -n 'installer_add_additional_packages tailscale\|unmount_offline' | cut -d: -f1 | tr '\n' ' ')" == '14 16 '
+reset; CTX_TAILSCALE_AUTHKEY_PATH="$TMP/authkey"; run_split
+check 'installed while the mirror is mounted' test "$(calls | grep -n 'installer_add_additional_packages tailscale\|unmount_offline' | cut -d: -f1 | tr '\n' ' ')" == '12 14 '
 
 section 'a failing step aborts the phase'
 reset; installer_minimal_installation() { record minimal; fail 'pacstrap exploded'; }
-run_phase arch_install_system
+run_phase install_disk_layout; run_phase install_system_payload
 check 'phase failed' test "$?" -ne 0
 check 'stopped there' eq "$(calls | tail -n1)" minimal
 check 'message' contains "$(cat "$ERR")" 'pacstrap exploded'

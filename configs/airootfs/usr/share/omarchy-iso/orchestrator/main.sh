@@ -47,7 +47,10 @@ unset _module
 build_phases() {
   add_phase 'Preparing live environment' prepare_live_unit
   add_phase 'Preparing install target' prepare_install_target_unit
-  add_phase 'Installing Arch + Omarchy' arch_install_system
+  add_phase 'Preparing disk layout' install_disk_layout_unit
+  add_phase 'Unpacking root image' unpack_root_image_unit
+  add_phase 'Installing Arch + Omarchy' install_system_payload_unit
+  add_phase 'Finalizing base system' finalize_base_system_unit
   add_phase 'Configuring hibernation' configure_hibernation_unit
   add_phase 'Configuring system' run_system_finalizer_unit
   # Before finalize_limine_boot: the deferred-provisioning cryptkey drop-in

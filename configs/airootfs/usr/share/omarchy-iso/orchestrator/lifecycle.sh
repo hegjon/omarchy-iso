@@ -2,7 +2,7 @@
 # What main()'s finally did in Python: CPU governors, bind mounts, hook masks
 # and the protected target are put back on every exit path. All idempotent.
 
-# The live hook masks arch_install_system puts up around pacstrap; Python
+# The live hook masks install_system_payload puts up around pacstrap; Python
 # restored them in that phase's finally.
 cleanup_live_hook_masks() {
   unmask_mkinitcpio_pacman_hooks / "${DEFERRED_BOOT_HOOKS[@]}"

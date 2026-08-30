@@ -26,6 +26,27 @@ ctx_from_env
 arch_init_library
 arch_load_config
 
+# The library's cross-phase state: what the old single-process install
+# passed between steps for free, made explicit for the phase units. The
+# parse above rebuilds everything derivable from the JSON; these are the
+# values only the run itself could produce -- the device nodes and UUIDs
+# the partitioning tools assigned, and the ledger of completed steps that
+# installer_finish audits (arch_init_library just reset it to virgin).
+# Each phase restores the state here and persists it back on success, so
+# the handoff needs no per-phase code and survives new state being added.
+LIBRARY_STATE_VARS=(PART_DEVPATH PART_PARTN PART_PARTUUID PART_UUID
+                    INST_HELPER_FLAGS INST_ZRAM_ENABLED)
+
+persist_library_state() {
+  local v
+  for v in "${LIBRARY_STATE_VARS[@]}"; do
+    declare -p "$v" 2>/dev/null || true
+  done >"$CTX_STATE_DIR/library-state.sh"
+}
+
+# shellcheck disable=SC1091
+[[ ! -f "$CTX_STATE_DIR/library-state.sh" ]] || source "$CTX_STATE_DIR/library-state.sh"
+
 # The destruction boundary, enforced here rather than trusted to ordering:
 # every hosted phase so far operates on the prepared target, and must never
 # run before the disk phase has formatted and mounted it — not from a stray
@@ -55,3 +76,7 @@ run_phase_cleanup() {
 trap run_phase_cleanup EXIT
 
 "$phase"
+
+# Reached only on success (set -e): hand this phase's library state to the
+# next phase's process.
+persist_library_state

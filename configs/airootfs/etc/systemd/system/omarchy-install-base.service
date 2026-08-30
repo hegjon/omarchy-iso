@@ -1,0 +1,16 @@
+[Unit]
+Description=Finalize the base system on the install target
+# The standard arch finishers: timezone, time synchronization, the root
+# password, fstab (generated, or written from the pre-mounted layout), and
+# the library's finish.
+PartOf=omarchy-install.target
+After=omarchy-install-strap.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/usr/share/omarchy-iso/orchestrator/context.env
+EnvironmentFile=-/run/omarchy-install/context.env
+EnvironmentFile=-/run/omarchy-install/install.env
+ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase finalize_base_system
+# Seconds of chroot work; fifteen minutes is a stuck-chroot guard.
+TimeoutStartSec=900
