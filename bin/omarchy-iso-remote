@@ -56,6 +56,21 @@
 #       rest is tmpfs). A write to any other device leaves the session
 #       alone and just says the stick is ready.
 #
+#   autoinstall [host] [--target-disk /dev/sdX] [--encrypt] [--user U]
+#               [--password P] [--hostname H]
+#       Drive a full unattended install on the machine, no keyboard: write
+#       the configurator's own output files onto a CIDATA-labeled partition
+#       appended in the boot stick's free tail (the same autoinstall path
+#       the QEMU rig uses — omarchy-cidata-load finds the label at boot and
+#       the wizard is skipped), reboot, then follow the install log to its
+#       verdict. The target disk defaults to the machine's first non-USB
+#       disk and the layout is sized to it; user/password default to
+#       omarchy/omarchy, and ~/.ssh/id_ed25519.pub becomes the installed
+#       system's authorized_keys, so the result answers SSH. A plain
+#       (non-deferred) cidata install ends at the dashboard's "Reboot Now"
+#       prompt — the machine sits there, installed, until someone presses
+#       or power-cycles.
+#
 # Environment:
 #   OMARCHY_REMOTE_MAC     default MAC for `find` (keeps it out of the repo)
 #   OMARCHY_REMOTE_SUBNET  optional /24 prefix, e.g. 192.168.1, to pin the
@@ -69,7 +84,7 @@ set -euo pipefail
 SSH_OPTS=(-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no
           -o ConnectTimeout=4 -o BatchMode=yes -o LogLevel=ERROR)
 
-usage() { sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,82p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 rssh() { local host=$1; shift; ssh "${SSH_OPTS[@]}" "root@$host" "$@"; }
 
@@ -346,11 +361,166 @@ cmd_write() {
   fi
 }
 
+cmd_autoinstall() {
+  local target_disk="" encrypt=false user=omarchy password=omarchy hostname=omarchy positional=()
+  while (($#)); do
+    case "$1" in
+      --target-disk) target_disk=$2; shift ;;
+      --encrypt) encrypt=true ;;
+      --user) user=$2; shift ;;
+      --password) password=$2; shift ;;
+      --hostname) hostname=$2; shift ;;
+      *) positional+=("$1") ;;
+    esac
+    shift
+  done
+  require_host "${positional[0]:-}"
+
+  # What the machine looks like: the boot stick (the cidata partition goes
+  # in its free tail), the install target and its true size (the layout is
+  # cut to it), and whether the mirror carries the dev or stable packages.
+  local probe stick target target_bytes flavor
+  probe=$(rssh "$HOST" '
+    src=$(findmnt -no SOURCE /run/archiso/bootmnt 2>/dev/null) || exit 1
+    disk=$(lsblk -no PKNAME "$src" 2>/dev/null | head -1); disk=${disk:+/dev/$disk}; disk=${disk:-$src}
+    target=$(lsblk -dno NAME,TYPE,TRAN | awk "\$2 == \"disk\" && \$3 != \"usb\" {print \"/dev/\" \$1; exit}")
+    bytes=""; [[ -n $target ]] && bytes=$(blockdev --getsize64 "$target")
+    # find, not a glob: the live root shell is zsh, whose nomatch aborts on
+    # an unmatched glob.
+    flavor=stable
+    find /var/cache/omarchy/mirror/offline -maxdepth 1 -name "omarchy-dev-[0-9]*" 2>/dev/null | grep -q . && flavor=dev
+    echo "stick=$disk target=$target bytes=$bytes flavor=$flavor"
+  ') || { echo "autoinstall: $HOST is not a live ISO session" >&2; exit 1; }
+  stick=$(sed -n 's/.*stick=\([^ ]*\) .*/\1/p' <<<"$probe")
+  target=${target_disk:-$(sed -n 's/.*target=\([^ ]*\) .*/\1/p' <<<"$probe")}
+  target_bytes=$(sed -n 's/.*bytes=\([^ ]*\) .*/\1/p' <<<"$probe")
+  flavor=$(sed -n 's/.*flavor=\([^ ]*\)$/\1/p' <<<"$probe")
+  [[ -n $target && -n $target_bytes ]] || { echo "autoinstall: no install target found on $HOST" >&2; exit 1; }
+  [[ -n $target_disk ]] && target_bytes=$(rssh "$HOST" "blockdev --getsize64 $target_disk")
+  echo "target: $HOST installing to $target ($((target_bytes / 1024 / 1024 / 1024)) GiB), stick $stick, $flavor packages"
+
+  # The configurator's own output files, exactly as the wizard writes them
+  # and as the QEMU rig generates them — sized to the real disk.
+  local dir hash runtime=omarchy settings=omarchy-settings
+  [[ $flavor == dev ]] && runtime=omarchy-dev settings=omarchy-settings-dev
+  local mib=$((1024 * 1024)) gib=$((1024 * 1024 * 1024))
+  local boot_start=$mib boot_size=$((2 * gib))
+  local main_start=$((boot_size + boot_start))
+  # Floored to a whole MiB: the library rejects a misaligned partition, and
+  # a raw disk size is rarely a MiB multiple.
+  local main_size=$(((target_bytes - main_start - mib) / mib * mib))
+  dir=$(mktemp -d)
+  trap 'rm -rf "$dir"' RETURN
+  hash=$(openssl passwd -6 "$password")
+
+  jq -n --arg hash "$hash" --arg user "$user" --arg pw "$password" --argjson enc "$encrypt" '
+    {root_enc_password: $hash,
+     users: [{enc_password: $hash, groups: [], sudo: true, username: $user}]}
+    + (if $enc then {encryption_password: $pw} else {} end)' >"$dir/user_credentials.json"
+
+  jq -n --arg disk "$target" --arg hostname "$hostname" \
+    --arg runtime "$runtime" --arg settings "$settings" \
+    --argjson boot_start "$boot_start" --argjson boot_size "$boot_size" \
+    --argjson main_start "$main_start" --argjson main_size "$main_size" '
+    {app_config: null, auth_config: {},
+     audio_config: {audio: "pipewire"},
+     bootloader_config: {bootloader: "Limine", uki: false, removable: false},
+     custom_commands: [],
+     omarchy_install: {
+       mode: "full_disk", defer_provisioning: false, target_mount: "/mnt",
+       boot: {esp_mount: "/boot", esp_path: "/EFI/limine",
+              efi_binary: "limine_x64.efi", enable_fallback: true},
+       storage: {kernel: "linux"}},
+     disk_config: {config_type: "default_layout", device_modifications: [
+       {device: $disk, wipe: true, partitions: [
+         {btrfs: [], dev_path: null, flags: ["boot", "esp"], fs_type: "fat32",
+          mount_options: [], mountpoint: "/boot",
+          obj_id: "ea21d3f2-82bb-49cc-ab5d-6f81ae94e18d",
+          size: {sector_size: {unit: "B", value: 512}, unit: "B", value: $boot_size},
+          start: {sector_size: {unit: "B", value: 512}, unit: "B", value: $boot_start},
+          status: "create", type: "primary"},
+         {btrfs: [{mountpoint: "/", name: "@"}, {mountpoint: "/home", name: "@home"},
+                  {mountpoint: "/var/log", name: "@log"},
+                  {mountpoint: "/var/cache/pacman/pkg", name: "@pkg"}],
+          dev_path: null, flags: [], fs_type: "btrfs",
+          mount_options: ["compress=zstd"], mountpoint: null,
+          obj_id: "8c2c2b92-1070-455d-b76a-56263bab24aa",
+          size: {sector_size: {unit: "B", value: 512}, unit: "B", value: $main_size},
+          start: {sector_size: {unit: "B", value: 512}, unit: "B", value: $main_start},
+          status: "create", type: "primary"}]}]},
+     hostname: $hostname, kernels: ["linux"],
+     network_config: {type: "iso"}, ntp: true, parallel_downloads: 8,
+     script: null, services: [],
+     mirror_config: {
+       custom_repositories: [], mirror_regions: {}, optional_repositories: [],
+       custom_servers: [
+         {url: "https://mirror.omarchy.org/$repo/os/$arch"},
+         {url: "https://mirror.rackspace.com/archlinux/$repo/os/$arch"},
+         {url: "https://geo.mirror.pkgbuild.com/$repo/os/$arch"}]},
+     swap: true,
+     packages: ["base-devel", "git", "omarchy-keyring", $settings, $runtime],
+     profile_config: {gfx_driver: null, greeter: null, profile: {}},
+     version: "3.0.9"}' >"$dir/user_configuration.json"
+
+  echo "Omarchy Remote" >"$dir/user_full_name.txt"
+  echo "remote@omarchy.org" >"$dir/user_email_address.txt"
+  echo "$encrypt" >"$dir/user_encrypt_installation.txt"
+  cp ~/.ssh/id_ed25519.pub "$dir/authorized_keys"
+
+  # The CIDATA partition: appended once in the stick's free tail (any later
+  # `write` of a fresh ISO wipes the table and it gets appended again). The
+  # medium is mounted and busy, so the kernel cannot re-read the whole
+  # table -- partx adds just the new entry.
+  echo "preparing the CIDATA partition on $stick"
+  local part
+  part=$(rssh "$HOST" "
+    if node=\$(blkid -L CIDATA 2>/dev/null) || node=\$(blkid -L cidata 2>/dev/null); then
+      echo \"\$node\"; exit 0
+    fi
+    echo ',256MiB,' | sfdisk --append --no-reread $stick >/dev/null 2>&1
+    partx -a $stick >/dev/null 2>&1 || true
+    udevadm settle 2>/dev/null || true
+    lsblk -nro NAME $stick | tail -1 | sed 's|^|/dev/|'
+  ")
+  [[ -n $part && $part != "$stick" ]] || { echo "autoinstall: could not create a cidata partition on $stick" >&2; exit 1; }
+  rssh "$HOST" "umount $part 2>/dev/null; mkfs.vfat -n CIDATA $part >/dev/null && mkdir -p /run/cidata-prep && mount $part /run/cidata-prep"
+  # --no-same-owner: FAT carries no ownership, and a chown failure is tar's
+  # exit status even though every byte landed.
+  tar -C "$dir" -cf - . | rssh "$HOST" "tar -C /run/cidata-prep -xf - --no-same-owner && umount /run/cidata-prep && sync"
+  echo "cidata written to $part; rebooting $HOST into the unattended install"
+  rssh "$HOST" "systemctl reboot" 2>/dev/null || true
+
+  # Follow it home: the machine comes back on a fresh lease, the loader
+  # skips the wizard, and the install log carries the verdict.
+  local ip line
+  sleep 45
+  until ip=$(discover); do sleep 10; done
+  echo "live again at $ip; waiting for the autoinstall to take"
+  until rssh "$ip" "grep -q 'Autoinstall configuration found' /var/log/omarchy-install.log" 2>/dev/null; do
+    sleep 5
+  done
+  echo "wizard skipped -- following the install"
+  # The verdict loop reads from a process substitution, not a pipeline: the
+  # follow ssh dies by pkill on either verdict, and under pipefail its 255
+  # would become the exit status of a succeeded install.
+  while IFS= read -r line; do
+    printf '%s %s\n' "$(date +%H:%M:%S)" "$line"
+    case "$line" in
+      *"Installation complete"*) echo "AUTOINSTALL SUCCEEDED on $ip (sitting at the Reboot Now prompt)"; pkill -f 'tail -n +1 -f /var/log/omarchy-install' 2>/dev/null || true; return 0 ;;
+      *"Installation halted"*|*"installer child exited"*) echo "AUTOINSTALL FAILED on $ip -- fetch the log with: omarchy-iso-remote log $ip" >&2; pkill -f 'tail -n +1 -f /var/log/omarchy-install' 2>/dev/null || true; return 1 ;;
+    esac
+  done < <(ssh "${SSH_OPTS[@]}" "root@$ip" 'tail -n +1 -f /var/log/omarchy-install.log' 2>/dev/null |
+    grep --line-buffered -E '›|Installation complete|Installation halted|installer child exited')
+  echo "autoinstall: lost the install log stream from $ip before a verdict" >&2
+  return 1
+}
+
 case "${1:-}" in
   find) shift; discover "$@" ;;
   monitor) shift; cmd_monitor "$@" ;;
   log) shift; cmd_log "$@" ;;
   check-key) shift; cmd_check_key "$@" ;;
+  autoinstall) shift; cmd_autoinstall "$@" ;;
   write) shift; cmd_write "$@" ;;
   -h|--help|'') usage ;;
   *) echo "unknown command: $1" >&2; usage 1 ;;
