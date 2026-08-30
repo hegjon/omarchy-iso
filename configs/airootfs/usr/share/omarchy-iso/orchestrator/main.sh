@@ -58,7 +58,7 @@ PHASE_GRAPH_TERMINAL=omarchy-install-factory-snapshot.service
 # the fallback.
 phase_graph_failure_detail() {
   local failed_unit=$1 detail
-  detail=$(cat "$CTX_STATE_DIR/phase-error" 2>/dev/null)
+  detail=$(cat "$CTX_STATE_DIR/phase-error" 2>/dev/null) || true
   [[ -n $detail ]] ||
     detail=$(journalctl --no-pager -o cat -b -u "$failed_unit" 2>/dev/null | tail -n 5 | tr '\n' ' ')
   printf '%s' "$detail"

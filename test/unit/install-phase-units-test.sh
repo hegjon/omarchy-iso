@@ -121,7 +121,10 @@ check "run-phase hands the phase's fail message over on a failing exit" error_ha
 graph_failure_prefers_handover() {
   local d out fallback
   d=$(mktemp -d) || return 1
+  # set -eE plus an ERR trap is main()'s regime: a missing handover file
+  # once turned the detail collector itself into the reported failure.
   out=$(bash -c '
+    set -eEuo pipefail; trap "echo ERR-TRAP-FIRED; exit 1" ERR
     journalctl() { echo "systemd noise only"; }
     CTX_STATE_DIR="'"$d"'"
     printf "install medium is too slow: try another USB stick" >"$CTX_STATE_DIR/phase-error"
@@ -129,6 +132,7 @@ graph_failure_prefers_handover() {
     phase_graph_failure_detail some.unit
   ' 2>&1)
   fallback=$(bash -c '
+    set -eEuo pipefail; trap "echo ERR-TRAP-FIRED; exit 1" ERR
     journalctl() { echo "systemd noise only"; }
     CTX_STATE_DIR="'"$d"'/empty"
     '"$(sed -n '/^phase_graph_failure_detail() {/,/^}/p' "$ORCH/main.sh")"'
@@ -136,7 +140,7 @@ graph_failure_prefers_handover() {
   ' 2>&1)
   rm -rf "$d"
   [[ $out == *"install medium is too slow"* && $out != *"systemd noise"* &&
-     $fallback == *"systemd noise only"* ]]
+     $fallback == *"systemd noise only"* && $fallback != *ERR-TRAP-FIRED* ]]
 }
 check "the graph failure headline prefers the handed-over message to the journal" graph_failure_prefers_handover
 
