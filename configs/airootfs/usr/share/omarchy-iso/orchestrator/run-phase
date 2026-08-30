@@ -26,12 +26,14 @@ declare -F "$phase" >/dev/null ||
 ctx_from_env
 
 # The journal keeps the raw stream; the install log (the support artifact
-# the dashboard tails and `log` fetches) gets a CSI-stripped copy, the same
-# treatment the tty entry point gives the orchestrator's own output. Best
-# effort: an unwritable log (a test harness, a hand-run phase) must not
-# cost the phase its output or its run.
+# the dashboard tails and `log` fetches) gets a filtered copy -- the shared
+# log-filter.sed strips terminal control sequences and the archinstall-bash
+# banners that would contradict a later failure (the dashboard applies the
+# same filter to the orchestrator child's output). Best effort: an
+# unwritable log (a test harness, a hand-run phase) must not cost the phase
+# its output or its run.
 if [[ -n ${CTX_LOG_PATH:-} ]] && touch "$CTX_LOG_PATH" 2>/dev/null; then
-  exec > >(tee >(sed -u 's/\x1b\[[0-9;?]*[A-Za-z]//g' >>"$CTX_LOG_PATH") 2>/dev/null) 2>&1
+  exec > >(tee >(sed -u -f "$ORCHESTRATOR_DIR/log-filter.sed" >>"$CTX_LOG_PATH") 2>/dev/null) 2>&1
 fi
 
 # The library's view of the configuration, so any phase function is hostable
@@ -41,20 +43,26 @@ fi
 arch_init_library
 arch_load_config
 
-# The library's cross-phase state: what the old single-process install
-# passed between steps for free, made explicit for the phase units. The
-# parse above rebuilds everything derivable from the JSON; these are the
-# values only the run itself could produce. The verified dependency map has
-# exactly two edges: the disk phase's format-time PART_* discoveries
-# (device nodes, partition numbers, the UUIDs mkfs assigned) feed the
-# strap's Limine setup and kernel params, and the strap's
-# INST_HELPER_FLAGS ledger feeds installer_finish's audit in the base
-# phase. (INST_ZRAM_ENABLED is set and read within the strap's own process
-# and does not belong here.) Every phase restores the state and persists
-# it back only when its run changed something, so the handoff needs no
-# per-phase code and relay phases write nothing.
+# The cross-phase state: what the old single-process install passed
+# between steps for free, made explicit for the phase units. The parse
+# above rebuilds everything derivable from the JSON; these are the values
+# only the run itself could produce. The verified library edges: the disk
+# phase's format-time PART_* discoveries (device nodes, partition numbers,
+# the UUIDs mkfs assigned) feed the strap's Limine setup and kernel
+# params, and the strap's INST_HELPER_FLAGS ledger feeds
+# installer_finish's audit in the base phase. (INST_ZRAM_ENABLED is set
+# and read within the strap's own process and does not belong here.) The
+# orchestrator's own cross-phase state travels the same way: the
+# target-setup memoization and the finalizer log's header/start-time,
+# which the system and user phases must share -- per-process, the header
+# was written twice and the two chroots saw different start times. Every
+# phase restores the state and persists it back only when its run changed
+# something, so the handoff needs no per-phase code and relay phases
+# write nothing.
 LIBRARY_STATE_VARS=(PART_DEVPATH PART_PARTN PART_PARTUUID PART_UUID
-                    INST_HELPER_FLAGS)
+                    INST_HELPER_FLAGS
+                    CTX_TARGET_SETUP_PREPARED CTX_OMARCHY_START_TIME
+                    CTX_OMARCHY_START_EPOCH CTX_FINALIZER_HEADER_WRITTEN)
 
 library_state_snapshot() {
   local v

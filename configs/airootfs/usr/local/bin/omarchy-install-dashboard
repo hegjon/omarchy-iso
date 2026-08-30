@@ -177,9 +177,9 @@ FINISH_TOP_ROW=2
 #          the install). libalpm makes one directory per package under
 #          <target>/var/lib/pacman/local; the denominator comes from
 #          build-iso.sh, so there is no second package list to drift.
-#          The root image unpack that precedes the package delta publishes
-#          phase_progress (stream bytes consumed) in the state file; it drives
-#          the same band until the local db fills in when the unpack lands.
+#          The root image unpack is its own phase now ("Unpacking root
+#          image"); it publishes phase_progress (stream bytes consumed) in
+#          the state file, which drives its own band below.
 #
 # Per-mille because a whole-percent asymptote over a 2-point band has two
 # reachable values and stops moving. No give-up predicate: two discontinuous
@@ -343,18 +343,27 @@ install_progress() {
   # cost on NVMe: run_system_finalizer can DKMS-build a driver and
   # finalize_limine_boot rebuilds every UKI, so they vary most on real hardware.
   # Over-allotting costs a step at a boundary; under-allotting costs a stall.
+  # Widths follow the measured X200 phase times (the graph made each phase's
+  # cost visible): disk 18 s, unpack 107 s, payload 39 s, base 2 s of a
+  # ~215 s install -- the unpack owns the biggest band and drives it with
+  # its own phase_progress (stream bytes consumed).
   case "$phase" in
     "Starting installation")      lo=10  hi=25   tau=5   ;;
     "Preparing live environment") lo=25  hi=50   tau=25  ;;
     "Preparing install target")   lo=50  hi=65   tau=20  ;;
-    "Installing Arch + Omarchy")  lo=65  hi=700  tau=150 pkg_signal=1 ;;
+    "Preparing disk layout")      lo=65  hi=110  tau=20  ;;
+    "Unpacking root image")       lo=110 hi=520  tau=100 ;;
+    "Installing Arch + Omarchy")  lo=520 hi=680  tau=60  pkg_signal=1 ;;
+    "Finalizing base system")     lo=680 hi=700  tau=10  ;;
     "Configuring hibernation")    lo=700 hi=720  tau=10  ;;
     "Configuring system")         lo=720 hi=850  tau=120 ;;
-    "Staging provisioning")          lo=850 hi=855  tau=5   ;;
+    "Staging provisioning")       lo=850 hi=855  tau=5   ;;
     "Finalizing Limine boot")     lo=855 hi=950  tau=90  ;;
     "Finalizing user")            lo=950 hi=978  tau=30  ;;
-    "Configuring login")          lo=978 hi=988  tau=5   ;;
-    "Configuring DNS resolver")   lo=988 hi=994  tau=5   ;;
+    "Configuring login")          lo=978 hi=984  tau=5   ;;
+    "Configuring SSH access")     lo=984 hi=988  tau=5   ;;
+    "Configuring Tailscale")      lo=988 hi=991  tau=5   ;;
+    "Configuring DNS resolver")   lo=991 hi=994  tau=5   ;;
     "Validating boot setup")      lo=994 hi=998  tau=5   ;;
     "Creating factory snapshot")  lo=998 hi=1000 tau=5   ;;
     *)
@@ -894,23 +903,12 @@ failure_menu() {
 }
 
 sanitize_child_output() {
-  # archinstall-bash is only a library subsystem in Omarchy's installer. Its
-  # archinstall-style completion banner would read as "done" after an Omarchy
-  # failure in a later phase, which makes the unified log contradictory. Keep
-  # it out of Omarchy's support log; the library's own log
-  # (/var/log/archinstall/install.log) is still uploaded separately by
-  # omarchy-upload-log. The lines carry the orchestrator's indentation (its
-  # info() is the one in effect once both are loaded).
-  sed -u \
-    -e $'s/\x1b\\[[0-9;?]*[A-Za-z]//g' \
-    -e '/^ *Activating systemd-timesyncd for time synchronization using Arch Linux and ntp.org NTP servers$/d' \
-    -e '/^ *Enabling service systemd-timesyncd$/d' \
-    -e '/^ *Setting password for root$/d' \
-    -e '/^ *Updating \/mnt\/etc\/fstab$/d' \
-    -e '/^ *Syncing the system\.\.\.$/d' \
-    -e '/^ *Installation completed without any errors\.$/d' \
-    -e '/^ *Log files temporarily available at \/var\/log\/archinstall\.$/d' \
-    -e '/^ *You may reboot when ready\.$/d'
+  # The shared log filter (CSI strip + the archinstall-bash banners that
+  # would read as "done" after a later Omarchy failure): one sed file for
+  # every writer of the unified log -- run-phase applies the same filter to
+  # each phase unit's output, since the banner-printing installer functions
+  # run inside omarchy-install-base.service now, not in this child.
+  sed -u -f /usr/share/omarchy-iso/orchestrator/log-filter.sed
 }
 
 launch_child() {

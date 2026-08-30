@@ -92,15 +92,11 @@ main() {
   # its own process. A failed phase fails its start job and the chain stops
   # there -- collect the phase's own words (handed over via the state dir;
   # the journal buries them under command output and systemd's exit lines).
-  local detail failed_unit
+  local failed_unit
   if ! systemctl start "$PHASE_GRAPH_TERMINAL"; then
     failed_unit=$(systemctl list-units --failed --plain --no-legend 'omarchy-install-*' 2>/dev/null |
       awk '{print $1; exit}')
-    detail=$(cat "$CTX_STATE_DIR/phase-error" 2>/dev/null)
-    [[ -n $detail ]] ||
-      detail=$(journalctl --no-pager -o cat -b -u "${failed_unit:-$PHASE_GRAPH_TERMINAL}" 2>/dev/null |
-        tail -n 5 | tr '\n' ' ')
-    fail "install phase ${failed_unit:-graph} failed: $detail"
+    fail "install phase ${failed_unit:-graph} failed: $(phase_graph_failure_detail "${failed_unit:-$PHASE_GRAPH_TERMINAL}")"
   fi
 
   phases_finalize
