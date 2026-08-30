@@ -483,10 +483,16 @@ cmd_autoinstall() {
     lsblk -nro NAME $stick | tail -1 | sed 's|^|/dev/|'
   ")
   [[ -n $part && $part != "$stick" ]] || { echo "autoinstall: could not create a cidata partition on $stick" >&2; exit 1; }
-  rssh "$HOST" "umount $part 2>/dev/null; mkfs.vfat -n CIDATA $part >/dev/null && mkdir -p /run/cidata-prep && mount $part /run/cidata-prep"
+  # Built as an image and dd'd on, never mkfs'd in place: on some boots
+  # archiso mounts the whole stick as the boot medium (the ISO signature is
+  # on the disk as well as the partition), and a mounted whole disk holds
+  # every partition exclusively -- mkfs and mount fail with EBUSY while
+  # plain writes to the partition node still work. omarchy-cidata-load has
+  # the matching read-side fallback.
+  rssh "$HOST" "umount /run/cidata-prep 2>/dev/null; rm -f /run/cidata.img; truncate -s 33554432 /run/cidata.img && mkfs.vfat -n CIDATA /run/cidata.img >/dev/null && mkdir -p /run/cidata-prep && mount -o loop /run/cidata.img /run/cidata-prep"
   # --no-same-owner: FAT carries no ownership, and a chown failure is tar's
   # exit status even though every byte landed.
-  tar -C "$dir" -cf - . | rssh "$HOST" "tar -C /run/cidata-prep -xf - --no-same-owner && umount /run/cidata-prep && sync"
+  tar -C "$dir" -cf - . | rssh "$HOST" "tar -C /run/cidata-prep -xf - --no-same-owner && umount /run/cidata-prep && dd if=/run/cidata.img of=$part bs=4M conv=fsync 2>/dev/null && rm -f /run/cidata.img && sync"
   echo "cidata written to $part; rebooting $HOST into the unattended install"
   rssh "$HOST" "systemctl reboot" 2>/dev/null || true
 
