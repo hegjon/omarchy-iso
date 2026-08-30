@@ -150,11 +150,15 @@ install_disk_layout() {
 }
 
 install_system_payload() {
+  # The offline cache is already bound at the target: the unit's
+  # RequiresMountsFor brought it up before this process started. The pin
+  # check stays loud -- the mount unit's Where= hard-codes /mnt.
+  require_target_is_mnt
+
   if [[ $CFG_HAS_MIRROR_CONFIG == true ]]; then
     installer_set_mirrors live
   fi
 
-  mount_offline_package_cache
   mask_mkinitcpio_pacman_hooks / "${DEFERRED_BOOT_HOOKS[@]}"
 
   info '› installing per-machine packages (mkinitcpio deferred to final Limine UKI build)'
@@ -197,7 +201,6 @@ install_system_payload() {
   fi
 
   unmask_mkinitcpio_pacman_hooks / "${DEFERRED_BOOT_HOOKS[@]}"
-  unmount_offline_package_cache
 
   # After the last pacstrap: each one runs its own pacman-key --init on the
   # target's gnupg dir. Runs on while the phases after this one configure
@@ -206,6 +209,13 @@ install_system_payload() {
 }
 
 finalize_base_system() {
+  # First, before anything else and well before genfstab below: release the
+  # offline-cache bind the strap phase Required. Safe from here -- this unit
+  # does not Require the mount, so the stop propagates to nobody -- and it
+  # guarantees the live-only bind is out of the mount table before fstab is
+  # generated from it.
+  unmount_offline_package_cache
+
   # Standard arch finishers.
   [[ -n $CFG_TIMEZONE ]] && { installer_set_timezone "$CFG_TIMEZONE" || true; }
   if [[ $CFG_NTP == true ]]; then
@@ -222,36 +232,29 @@ finalize_base_system() {
   installer_finish
 }
 
-# Let pacstrap consume bundled packages without copying them first.
-#
-# Pacstrap always points pacman's CacheDir inside the target. Without this
-# bind mount, pacman copies every package from the ISO's file:// repository
-# into that cache and then extracts it, duplicating several GiB of I/O.
-# Mount the already-populated offline repository at the target cache for the
-# duration of package installation, as a systemd mount unit: PartOf= the
-# install target means a group abort unmounts it on every exit path, with no
-# trap bookkeeping here. It is stopped before genfstab so the live-only bind
-# can never leak into the installed system's fstab. The unit's Where= pins
-# the target at /mnt; fail loudly if CTX_TARGET ever diverges from it.
+# The offline mirror bound onto the target's pacman cache (pacstrap points
+# CacheDir inside the target; without the bind, pacman copies every package
+# from the ISO's file:// repository into that cache before extracting it,
+# duplicating several GiB of I/O). Mounting is declarative: the strap unit
+# carries RequiresMountsFor=/mnt/var/cache/pacman/pkg, so systemd brings
+# the bind up before the phase and fails the phase if it cannot -- the
+# pre-flight gate proved the mirror long before, so no bash pre-check adds
+# anything by then. Stopping is explicit and lives in the BASE phase,
+# before genfstab (the live-only bind must never leak into the installed
+# fstab): the strap cannot stop it itself, because stopping a Required
+# mount propagates to its dependents and would take the strap down mid-run.
 OFFLINE_CACHE_MOUNT_UNIT=mnt-var-cache-pacman-pkg.mount
 
-mount_offline_package_cache() {
-  local source=/var/cache/omarchy/mirror/offline
-  require_target_is_mnt
-  [[ -d $source ]] || fail "offline package cache missing: $source"
-  # The mirror lives on the boot medium, mounted here by
-  # var-cache-omarchy-mirror-offline.mount. An empty directory means that mount
-  # did not happen -- a damaged or truncated image, or a medium that went away
-  # -- and pacstrapping from it would fail package by package instead of
-  # saying so once, now, before the target is touched.
-  mountpoint -q "$source" ||
-    fail "offline package mirror is not mounted at $source: the mirror on the install medium (arch/x86_64/mirror) did not mount"
-  systemctl start "$OFFLINE_CACHE_MOUNT_UNIT" ||
-    fail "could not bind the offline mirror onto the target package cache: journalctl -u $OFFLINE_CACHE_MOUNT_UNIT"
-}
-
 unmount_offline_package_cache() {
-  systemctl stop "$OFFLINE_CACHE_MOUNT_UNIT"
+  # umount(8), deliberately not `systemctl stop`: the whole phase chain is
+  # one systemd transaction, and a stop job on a unit inside the terminal
+  # phase's Requires= closure conflicts with the in-flight dependency jobs
+  # -- measured as "A dependency job for omarchy-install-factory-snapshot
+  # .service failed", cancelling the rest of the install. A plain unmount
+  # involves no jobs; systemd tracks /proc/mounts and marks the unit
+  # inactive on its own, and PartOf= still covers the abort path when the
+  # bind is up at target stop.
+  umount "$CTX_TARGET/var/cache/pacman/pkg"
 }
 
 DEFERRED_BOOT_HOOKS=(

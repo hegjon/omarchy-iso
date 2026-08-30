@@ -19,7 +19,7 @@ fs_perform_filesystem_operations() {
   PART_DEVPATH=(/dev/vda1 /dev/vda2) PART_PARTN=(1 2)
   PART_PARTUUID=(1111-aaaa 2222-bbbb) PART_UUID=(3333-cccc 4444-dddd)
 }
-for fn in installer_mount_ordered_layout installer_set_mirrors \
+for fn in require_target_is_mnt installer_mount_ordered_layout installer_set_mirrors \
           installer_minimal_installation installer_setup_swap installer_create_users applications_install \
           installer_add_additional_packages installer_set_timezone installer_activate_time_synchronization \
           installer_set_user_password installer_genfstab installer_finish \
@@ -52,7 +52,7 @@ section 'full-disk order'
 reset; run_split
 check 'phases ok' eq "$?" 0
 check 'sequence' eq "$(steps)" \
-'fs_perform_filesystem_operations;installer_mount_ordered_layout;installer_set_mirrors live;mount_offline_package_cache;mask /;installer_minimal_installation --no-mkinitcpio;installer_set_mirrors on_target;installer_setup_swap;configure_limine_boot;installer_create_users;applications_install;unmask /;unmount_offline_package_cache;start_target_keyring_init;installer_set_timezone UTC;installer_activate_time_synchronization;installer_set_user_password root $y$hash;installer_genfstab;installer_finish;'
+'fs_perform_filesystem_operations;installer_mount_ordered_layout;require_target_is_mnt;installer_set_mirrors live;mask /;installer_minimal_installation --no-mkinitcpio;installer_set_mirrors on_target;installer_setup_swap;configure_limine_boot;installer_create_users;applications_install;unmask /;start_target_keyring_init;unmount_offline_package_cache;installer_set_timezone UTC;installer_activate_time_synchronization;installer_set_user_password root $y$hash;installer_genfstab;installer_finish;'
 
 section 'library-state handoff between phase processes'
 # The persist/restore pair extracted from run-phase, driven the way two
@@ -62,7 +62,7 @@ section 'library-state handoff between phase processes'
 handoff_roundtrip() {
   local d rc=0
   d=$(mktemp -d) || return 1
-  eval "$(sed -n '/^LIBRARY_STATE_VARS=/,/^}/p' "$ORCHESTRATOR/run-phase")"
+  eval "$(sed -n '/^LIBRARY_STATE_VARS=/,/^# library-state helpers end/p' "$ORCHESTRATOR/run-phase")"
   (
     CTX_STATE_DIR=$d
     PART_PARTUUID=(1111-aaaa 2222-bbbb)
@@ -83,9 +83,9 @@ check 'library state survives the process boundary' handoff_roundtrip
 section 'invariants'
 check 'mkinitcpio deferred to the final UKI build' contains "$(steps)" 'installer_minimal_installation --no-mkinitcpio'
 check 'limine set up after the base delta, before useradd' test "$(calls | grep -n 'configure_limine_boot\|installer_create_users' | cut -d: -f1 | tr '\n' ' ')" == '9 10 '
-check 'package cache unmounted before genfstab' test "$(calls | grep -n 'unmount_offline_package_cache\|installer_genfstab' | cut -d: -f1 | tr '\n' ' ')" == '13 18 '
+check 'package cache unmounted before genfstab' test "$(calls | grep -n 'unmount_offline_package_cache\|installer_genfstab' | cut -d: -f1 | tr '\n' ' ')" == '14 18 '
 check 'live hooks unmasked after the last pacstrap' test "$(calls | grep -n 'applications_install\|^unmask' | cut -d: -f1 | tr '\n' ' ')" == '11 12 '
-check 'keyring init started after the last pacstrap' test "$(calls | grep -n 'unmount_offline_package_cache\|start_target_keyring_init' | cut -d: -f1 | tr '\n' ' ')" == '13 14 '
+check 'keyring init started after the last pacstrap' test "$(calls | grep -n 'applications_install\|start_target_keyring_init' | cut -d: -f1 | tr '\n' ' ')" == '11 13 '
 
 section 'phase wiring'
 # Walks the real unit graph: from the terminal unit, follow each Requires=
@@ -135,7 +135,7 @@ done
 
 section 'tailscale package when an auth key is staged'
 reset; CTX_TAILSCALE_AUTHKEY_PATH="$TMP/authkey"; run_split
-check 'installed while the mirror is mounted' test "$(calls | grep -n 'installer_add_additional_packages tailscale\|unmount_offline' | cut -d: -f1 | tr '\n' ' ')" == '12 14 '
+check 'installed while the mirror is mounted' test "$(calls | grep -n 'installer_add_additional_packages tailscale\|unmount_offline' | cut -d: -f1 | tr '\n' ' ')" == '12 15 '
 
 section 'a failing step aborts the phase'
 reset; installer_minimal_installation() { record minimal; fail 'pacstrap exploded'; }

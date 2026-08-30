@@ -4,13 +4,20 @@ Description=Install the package payload onto the target
 # live boot hooks masked: the per-machine pacstrap (kernel, microcode),
 # swap, the Limine boot config, users, the application selections and the
 # staged Tailscale package -- in exactly the order the one-function phase
-# ran them. The cache bind is mnt-var-cache-pacman-pkg.mount (PartOf= the
-# install target, so a group abort unmounts it); the hook masks are
-# restored by the orchestrator's exit trap whatever happens to this
-# process.
+# ran them. The hook masks are restored by the orchestrator's exit trap
+# whatever happens to this process.
 PartOf=omarchy-install.target
 After=omarchy-install-image.service
 Requires=omarchy-install-image.service
+# The offline mirror bound onto the target's pacman cache, as a declared
+# data dependency: systemd starts mnt-var-cache-pacman-pkg.mount before
+# this phase and fails the phase if the bind cannot come up. The pre-flight
+# gate proved the mirror long before this point, so a failure here is
+# infrastructure, not medium. The bind is released by the base phase before
+# genfstab, with umount(8) rather than a stop job: a stop on any unit in
+# the terminal phase's Requires= closure conflicts with the chain's
+# in-flight transaction and cancels the remaining phases.
+RequiresMountsFor=/mnt/var/cache/pacman/pkg
 
 [Service]
 Type=oneshot
