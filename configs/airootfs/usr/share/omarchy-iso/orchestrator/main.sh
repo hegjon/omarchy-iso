@@ -7,11 +7,12 @@
 # wrapper (omarchy-iso-install) consumes CLI args and passes configuration
 # paths via OMARCHY_INSTALL_* environment variables.
 #
-# Phase functions run in this shell: any failing command, fail() or the
-# library's die() ends the install, and the EXIT trap does what the Python
-# orchestrator's finally did — record the failed phase for the dashboard,
-# restore CPU governors, unwind bind mounts and hook masks, tear down a
-# protected target.
+# The phases run as systemd units (run-phase hosts each function in the
+# unit's own process); this process seeds the dashboard state, starts the
+# graph's terminal unit, and finalizes. Its EXIT trap does what the Python
+# orchestrator's finally did — record a failure no phase could, restore CPU
+# governors and hook masks, stop the install target (the group abort), tear
+# down a protected target.
 
 set -eEuo pipefail
 

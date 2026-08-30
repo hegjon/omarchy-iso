@@ -243,8 +243,6 @@ finalize_base_system() {
 # before genfstab (the live-only bind must never leak into the installed
 # fstab): the strap cannot stop it itself, because stopping a Required
 # mount propagates to its dependents and would take the strap down mid-run.
-OFFLINE_CACHE_MOUNT_UNIT=mnt-var-cache-pacman-pkg.mount
-
 unmount_offline_package_cache() {
   # umount(8), deliberately not `systemctl stop`: the whole phase chain is
   # one systemd transaction, and a stop job on a unit inside the terminal

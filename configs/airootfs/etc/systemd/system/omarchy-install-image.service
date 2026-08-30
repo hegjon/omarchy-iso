@@ -1,11 +1,9 @@
 [Unit]
 Description=Unpack the Omarchy root image onto the install target
-# The first migrated phase of the install: btrfs receive of the root image
-# stream and the subvolume swap, hosted by run-phase in its own process. The
-# orchestrator starts this unit where its loop used to call the function and
-# blocks on the start — a oneshot's start job completes when the phase does,
-# with the failure in the exit status. Pre-flight gates stay the
-# orchestrator's: by this point the stream is verified and the layout mounted.
+# btrfs receive of the root image stream and the subvolume swap, hosted by
+# run-phase in its own process. Reached through the graph: the disk phase
+# it Requires= has formatted and mounted the layout, and the pre-flight
+# gate two edges earlier verified the stream.
 PartOf=omarchy-install.target
 After=omarchy-install-disk.service
 Requires=omarchy-install-disk.service

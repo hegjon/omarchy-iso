@@ -16,7 +16,8 @@ error() {
 }
 
 # Abort the current phase with a message (the Python orchestrator raised
-# RuntimeError). The phase runner's EXIT trap records it in state.json.
+# RuntimeError). run-phase's EXIT trap records it in state.json and hands
+# it to the orchestrator's failure headline.
 ORCH_LAST_ERROR=''
 fail() {
   ORCH_LAST_ERROR=$*
