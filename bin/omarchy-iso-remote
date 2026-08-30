@@ -1,0 +1,357 @@
+#!/bin/bash
+#
+# Drive a remote hardware test machine (the X200 class: BIOS, USB boot, on
+# the local network) without chasing its IP across boots.
+#
+# DHCP hands the box a different address almost every boot, so everything
+# here starts from discovery: match a NIC MAC in the neighbor table after a
+# ping sweep, or identify a live-ISO boot behaviorally — the host that
+# accepts root with the baked SSH key and has /run/archiso. Root SSH on the
+# live ISO comes from configs/airootfs/root/.ssh/authorized_keys (untracked;
+# drop your pubkey there before building a test ISO).
+#
+# Usage: omarchy-iso-remote <command> [args]
+#
+#   find [--mac AA:BB:...] [--subnet 192.168.1]
+#       Print the machine's current IP. With --mac (or OMARCHY_REMOTE_MAC),
+#       ping-sweep and match the neighbor table; without, sweep port 22 for
+#       a live-ISO root login.
+#
+#   monitor [host]
+#       (Every command's [host] takes an IP, a hostname, or a MAC address —
+#       a MAC is resolved with a fresh sweep, surviving DHCP reshuffles.)
+#       Watch a live-ISO boot: which USB stick it booted from (model+serial
+#       — sticks differ in speed, so timings are meaningless unnamed), the
+#       boot verifies and the prefetch handing over, per-unit timings and
+#       the prefetch plan once the chain latches. Discovers the host first
+#       when none is given.
+#
+#   log [host] [dest]
+#       Fetch /var/log/omarchy-install.log from the live system.
+#
+#   check-key <iso>
+#       Show the authorized_keys baked into the ISO's live root (the thing
+#       that makes every other command here possible). Reads the one file
+#       straight out of the ISO: the squashfs is a contiguous ISO9660
+#       extent, so unsquashfs -o at the LBA xorriso reports needs no
+#       extraction. Installs squashfs-tools/libisoburn on first use.
+#
+#   write <iso> [host] [--device <path|serial>] [--keyless-ok]
+#       Stream an ISO onto the machine's USB stick over SSH (no read-back
+#       verify: it would double the wall time and its memory pressure could
+#       evict the pinned toolchain -- the boot-time verify units judge the
+#       stick for real on the next boot). Writing the medium the live system runs
+#       from (copytoram=n, what our boot entries pin) corrupts the mounted
+#       squashfs, so from the first written megabyte nothing can load that
+#       is not already in RAM — a naive attempt dies mid-write, half-written
+#       stick and all (measured, not theory). The self-medium path
+#       therefore prepares the session first: stop omarchy-install.target
+#       and every boot reader (verifies, sync, prefetch), so nothing holds
+#       the medium or churns the page cache, then pin the whole write
+#       toolchain and its libraries into RAM. After that the session is
+#       sacrificial: hands off its console, and when the write lands the
+#       tool reboots it itself -- via sysrq-b through bash builtins, the
+#       one reboot path that needs no binaries the dead squashfs would
+#       have to serve (dd's conv=fsync already flushed the stick; the
+#       rest is tmpfs). A write to any other device leaves the session
+#       alone and just says the stick is ready.
+#
+# Environment:
+#   OMARCHY_REMOTE_MAC     default MAC for `find` (keeps it out of the repo)
+#   OMARCHY_REMOTE_SUBNET  optional /24 prefix, e.g. 192.168.1, to pin the
+#                          sweep; by default every directly connected IPv4
+#                          network is tried in turn (past a router the
+#                          neighbor table cannot see a MAC anyway, so the
+#                          connected networks are the whole search space)
+
+set -euo pipefail
+
+SSH_OPTS=(-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no
+          -o ConnectTimeout=4 -o BatchMode=yes -o LogLevel=ERROR)
+
+usage() { sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+
+rssh() { local host=$1; shift; ssh "${SSH_OPTS[@]}" "root@$host" "$@"; }
+
+# Every directly connected IPv4 network's /24, one per line. MAC discovery
+# is an L2 affair -- past a router the neighbor table cannot see the MAC at
+# all -- so the connected networks are the entire meaningful search space.
+# Networks wider than /24 are represented by the /24 our own address sits
+# in: sweeping a /16 is 65k pings for a machine that in practice shares the
+# home segment.
+connected_subnets() {
+  ip -4 -o addr show scope global 2>/dev/null |
+    awk '{split($4, a, "[./]"); print a[1] "." a[2] "." a[3]}' | sort -u
+}
+
+# Fill the neighbor table (parallel one-shot pings) and match the MAC there;
+# fall back to the behavioral probe when no MAC is known.
+discover() {
+  local mac="${OMARCHY_REMOTE_MAC:-}" subnets="${OMARCHY_REMOTE_SUBNET:-}" subnet ip i
+  while (($#)); do
+    case "$1" in
+      --mac) mac=$2; shift ;;
+      --subnet) subnets=$2; shift ;;
+      *) echo "find: unknown option $1" >&2; exit 1 ;;
+    esac
+    shift
+  done
+  # No subnet given: try every directly connected network in turn.
+  [[ -n $subnets ]] || subnets=$(connected_subnets)
+  [[ -n $subnets ]] || { echo "no connected IPv4 network found" >&2; exit 1; }
+
+  for subnet in $subnets; do
+    for i in $(seq 1 254); do (ping -c1 -W1 "$subnet.$i" >/dev/null 2>&1) & done
+    wait
+
+    if [[ -n $mac ]]; then
+      ip=$(ip neigh | awk -v m="${mac,,}" 'tolower($5) == m && $NF != "FAILED" {print $1; exit}')
+      [[ -n $ip ]] && { echo "$ip"; return 0; }
+      continue
+    fi
+
+    # No MAC: the live ISO is the host that lets root in and is an archiso.
+    ip=$(for i in $(seq 1 254); do
+      (nc -z -w1 "$subnet.$i" 22 2>/dev/null && echo "$subnet.$i") &
+    done | while read -r ip; do
+      if rssh "$ip" "test -d /run/archiso" 2>/dev/null; then
+        echo "$ip"
+        break
+      fi
+    done)
+    [[ -n $ip ]] && { echo "$ip"; return 0; }
+  done
+
+  if [[ -n $mac ]]; then
+    echo "MAC $mac not found on: $(echo $subnets | tr '\n' ' ')(.0/24 each)" >&2
+  else
+    echo "no live-ISO host found on: $(echo $subnets | tr '\n' ' ')(.0/24 each)" >&2
+  fi
+  return 1
+}
+
+# Every command's [host] accepts an IP/hostname or a MAC address: a MAC is
+# resolved through the sweep, so `write <iso> aa:bb:cc:dd:ee:ff` works
+# across the reboots that shuffle the DHCP lease.
+# Print the ISO's baked root authorized_keys. Returns 0 with the keys on
+# stdout, 1 when the ISO definitively lacks them, 2 when it cannot tell
+# (tools unavailable).
+iso_authorized_keys() {
+  local iso=$1 lba
+  if ! command -v xorriso >/dev/null || ! command -v unsquashfs >/dev/null; then
+    omarchy-pkg-add squashfs-tools libisoburn >/dev/null 2>&1 || return 2
+  fi
+  lba=$(xorriso -indev "$iso" -find /arch/x86_64/airootfs.sfs -exec report_lba 2>/dev/null |
+    awk -F',' '/File data lba/ { gsub(/ /, "", $2); print $2; exit }')
+  [[ -n $lba ]] || return 2
+  unsquashfs -o "$((lba * 2048))" -cat "$iso" root/.ssh/authorized_keys 2>/dev/null |
+    grep . || return 1
+}
+
+cmd_check_key() {
+  local iso="${1:-}" keys
+  [[ -f $iso ]] || { echo "check-key: no such ISO: $iso" >&2; exit 1; }
+  case "$(iso_authorized_keys "$iso" >/dev/null 2>&1; echo $?)" in
+    0)
+      keys=$(iso_authorized_keys "$iso")
+      echo "authorized_keys baked into $iso:"
+      ssh-keygen -lf /dev/stdin <<<"$keys" 2>/dev/null || printf '%s\n' "$keys"
+      ;;
+    1) echo "NO authorized_keys in $iso: a machine booting it answers SSH to nobody" >&2; exit 1 ;;
+    *) echo "cannot inspect $iso (xorriso/unsquashfs unavailable)" >&2; exit 2 ;;
+  esac
+}
+
+require_host() {
+  HOST="${1:-}"
+  if [[ $HOST =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]]; then
+    HOST=$(discover --mac "$HOST") || exit 1
+  elif [[ -z $HOST ]]; then
+    HOST=$(discover) || exit 1
+  fi
+}
+
+cmd_monitor() {
+  require_host "${1:-}"
+  echo "monitoring $HOST (mac $(ip neigh show "$HOST" | awk '{print $5}'))"
+  rssh "$HOST" '
+    uptime
+    src=$(findmnt -no SOURCE /run/archiso/bootmnt)
+    disk=$(lsblk -no PKNAME "$src" 2>/dev/null | head -1); disk=${disk:-${src#/dev/}}
+    echo "boot medium: $src ($(lsblk -dno MODEL,SERIAL,SIZE,TRAN /dev/$disk 2>/dev/null | tr -s " ")), scheduler: $(cat /sys/block/$disk/queue/scheduler 2>/dev/null)"
+  '
+  local i out
+  for i in $(seq 1 120); do
+    out=$(rssh "$HOST" '
+      echo "load: $(cut -d" " -f1-3 /proc/loadavg)"
+      for u in omarchy-mirror-verify omarchy-pacman-sync omarchy-root-image-verify omarchy-prefetch; do
+        echo "$u: $(systemctl is-active $u.service 2>/dev/null)"
+      done
+      pgrep -x configurator >/dev/null && echo "configurator: running" || true
+      pgrep -f "[o]marchy-iso-install" >/dev/null && echo "installer: running" || true
+    ' 2>/dev/null) || { echo "$(date +%H:%M:%S) sample failed"; sleep 10; continue; }
+    printf '=== %s ===\n%s\n' "$(date +%H:%M:%S)" "$out"
+    if grep -qE "omarchy-prefetch: (active|failed)$" <<<"$out"; then
+      echo "--- chain done: unit timings + prefetch plan ---"
+      rssh "$HOST" '
+        for u in omarchy-mirror-verify omarchy-pacman-sync omarchy-root-image-verify omarchy-prefetch; do
+          systemctl show -p ExecMainStartTimestamp -p ExecMainExitTimestamp -p Result "$u.service" | sed "s/^/$u /"
+        done
+        journalctl -u omarchy-prefetch.service -o short-monotonic --no-pager | tail -4
+        cat /run/omarchy-prefetch/plan 2>/dev/null
+      '
+      return 0
+    fi
+    sleep 15
+  done
+}
+
+cmd_log() {
+  require_host "${1:-}"
+  local dest="${2:-omarchy-install-$HOST.log}"
+  scp -O "${SSH_OPTS[@]}" "root@$HOST:/var/log/omarchy-install.log" "$dest"
+  echo "saved: $dest"
+}
+
+cmd_write() {
+  local iso="" device="" keyless_ok=false positional=()
+  while (($#)); do
+    case "$1" in
+      --device) device=$2; shift ;;
+      --keyless-ok) keyless_ok=true ;;
+      *) positional+=("$1") ;;
+    esac
+    shift
+  done
+  iso="${positional[0]:-}"
+  [[ -f $iso ]] || { echo "write: no such ISO: $iso" >&2; exit 1; }
+
+  # A keyless ISO on the remote stick is a lockout: the next boot answers
+  # SSH to nobody and the remote loop is over until someone walks to the
+  # machine. Refuse unless the caller says that is the point (a stick for
+  # hand-off, say).
+  case "$(iso_authorized_keys "$iso" >/dev/null 2>&1; echo $?)" in
+    1)
+      if ! $keyless_ok; then
+        echo "write: $iso has no baked authorized_keys -- the machine that" >&2
+        echo "boots it will answer SSH to nobody. Pass --keyless-ok if that" >&2
+        echo "is intended." >&2
+        exit 1
+      fi
+      echo "note: keyless ISO (--keyless-ok): no SSH into the next boot"
+      ;;
+    2) echo "note: cannot inspect $iso for authorized_keys (tools missing); writing anyway" ;;
+  esac
+
+  require_host "${positional[1]:-}"
+
+  # The target is, in order: --device as a /dev path, --device as a serial
+  # number matched against the machine's disks, or the first USB disk. The
+  # write then refuses/prepares when the live system runs from that same
+  # device (see the header); copytoram=y frees the medium, and the probe
+  # below sees that.
+  local probe
+  # shellcheck disable=SC2029
+  probe=$(rssh "$HOST" "
+    spec='$device'
+    # The medium mounts as a partition on some boots and as the whole disk
+    # on others (hybrid ISO): PKNAME answers only for the former, so fall
+    # back to the source itself -- a bare /dev/ here once made the
+    # self-medium check miss and a naive write go out.
+    src=\$(findmnt -no SOURCE /run/archiso/bootmnt 2>/dev/null) || true
+    disk=''
+    if [[ -n \$src ]]; then
+      disk=\$(lsblk -no PKNAME \"\$src\" 2>/dev/null | head -1)
+      [[ -n \$disk ]] && disk=/dev/\$disk || disk=\$src
+    fi
+    if [[ -z \$spec ]]; then
+      usb=\$(lsblk -dno NAME,TRAN | awk '\$2 == \"usb\" {print \"/dev/\" \$1; exit}')
+    elif [[ \$spec == /dev/* ]]; then
+      [[ -b \$spec ]] && usb=\$spec || usb=''
+    else
+      usb=\$(lsblk -dno NAME,SERIAL | awk -v s=\"\$spec\" '\$2 == s {print \"/dev/\" \$1; exit}')
+    fi
+    ident=''
+    [[ -n \$usb ]] && ident=\$(lsblk -dno MODEL,SERIAL,SIZE \"\$usb\" 2>/dev/null | tr -s ' ')
+    echo \"medium=\$disk usb=\$usb ident=\$ident\"
+  ")
+  local medium usb ident
+  medium=$(sed -n 's/.*medium=\([^ ]*\) .*/\1/p' <<<"$probe")
+  usb=$(sed -n 's/.*usb=\([^ ]*\) .*/\1/p' <<<"$probe")
+  ident=$(sed -n 's/.*ident=\(.*\)/\1/p' <<<"$probe")
+  if [[ -z $usb ]]; then
+    if [[ -n $device ]]; then
+      echo "write: no device on $HOST matching '$device' (path must exist, serial per lsblk -dno NAME,SERIAL)" >&2
+    else
+      echo "write: no USB disk on $HOST" >&2
+    fi
+    exit 1
+  fi
+  echo "target: $HOST:$usb ($ident)"
+  if [[ -n $medium && $medium == "$usb" ]]; then
+    echo "write: $HOST runs its live system FROM $usb -- preparing the session"
+    echo "(everything the write needs is pinned in RAM; the session is"
+    echo "sacrificial after this: hands off its console, reboot when done)"
+    rssh "$HOST" '
+      # Nothing may hold the medium or churn the page cache once the write
+      # starts: an aborted install group and stopped boot readers give the
+      # write the medium to itself, and every cached page stays cached.
+      systemctl stop omarchy-install.target 2>/dev/null || true
+      systemctl stop omarchy-prefetch.service omarchy-root-image-verify.service \
+        omarchy-mirror-verify.service omarchy-pacman-sync.service 2>/dev/null || true
+      # Pin the write toolchain: after the first written megabyte, only what
+      # is already in RAM can run -- read every needed binary and its
+      # libraries fully, so no demand fault lands on the dying squashfs.
+      # systemctl and reboot are on the list because stopping units and the
+      # final reboot must work from cache too.
+      pinned=0
+      for b in bash dd head cat sha256sum awk sed grep ldd xargs \
+               systemctl reboot lsblk findmnt; do
+        bin=$(command -v "$b" 2>/dev/null) || continue
+        cat "$bin" >/dev/null 2>&1 && pinned=$((pinned + 1))
+        ldd "$bin" 2>/dev/null | awk "\$3 ~ /^\// {print \$3}"
+      done | sort -u | while read -r lib; do cat "$lib" >/dev/null 2>&1 || true; done
+      cat /usr/lib/ld-linux-x86-64.so.2 >/dev/null 2>&1 || true
+      echo "session prepared: readers stopped, toolchain pinned"
+    ' || { echo "write: could not prepare the live session" >&2; exit 1; }
+  fi
+
+  local size
+  size=$(stat -c %s "$iso")
+  echo "writing $((size / 1048576)) MiB to $HOST:$usb"
+  # No read-back verify: re-reading the whole stick doubles the wall time at
+  # stick speed and, on a self-medium write, the read pipe's memory pressure
+  # is exactly what could evict the pinned toolchain. dd's exit status with
+  # conv=fsync is the success signal; the ISO's own boot-time verify units
+  # judge the stick for real on the next boot.
+  # dd's own progress line rides the ssh channel's stderr home: it counts
+  # bytes the device accepted, not bytes fed into the pipe, and needs no
+  # extra tool on either end.
+  # shellcheck disable=SC2029
+  cat "$iso" | ssh "${SSH_OPTS[@]}" "root@$HOST" \
+    "dd of=$usb bs=4M oflag=direct conv=fsync status=progress" ||
+    { echo "write failed" >&2; exit 1; }
+
+  if [[ -n $medium && $medium == "$usb" ]]; then
+    # The session just overwrote its own medium: it is a dead end, and the
+    # only trustworthy reboot is one that needs no binaries at all -- unit
+    # teardown would exec ExecStop= programs the dead squashfs cannot load.
+    # sysrq-b through bash builtins reboots at the kernel, and skipping the
+    # sync is fine: conv=fsync above flushed the stick, the rest is tmpfs.
+    echo "write complete and flushed: rebooting $HOST into the new image"
+    rssh "$HOST" 'printf 1 > /proc/sys/kernel/sysrq; printf b > /proc/sysrq-trigger' 2>/dev/null || true
+    echo "rebooted (the connection dropping is the reboot happening)"
+  else
+    echo "write complete and flushed: reboot $HOST when ready to boot it"
+  fi
+}
+
+case "${1:-}" in
+  find) shift; discover "$@" ;;
+  monitor) shift; cmd_monitor "$@" ;;
+  log) shift; cmd_log "$@" ;;
+  check-key) shift; cmd_check_key "$@" ;;
+  write) shift; cmd_write "$@" ;;
+  -h|--help|'') usage ;;
+  *) echo "unknown command: $1" >&2; usage 1 ;;
+esac
