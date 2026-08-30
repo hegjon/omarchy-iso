@@ -67,9 +67,9 @@ IMAGE_COMPRESS="compress-force=zstd:15"
 # window limit). -T0 is a pure win: ~25 s on a many-core builder, same bytes.
 # Niced: -T0 at this level saturates every core, and a build is background
 # work on a developer's machine -- the desktop keeps the CPU when it asks.
-STREAM_COMPRESS=(nice -n 15 zstd -q -15 --long=27 -T0)
+STREAM_COMPRESS=(nice -n 15 zstd -q -1 --long=27 -T0)
 # Name of the subvolume inside the stream. The orchestrator looks for this name
-# after `btrfs receive` (phases_impl.ROOT_IMAGE_SUBVOLUME).
+# after `btrfs receive` (ROOT_IMAGE_SUBVOLUME in orchestrator/root_image.sh).
 IMAGE_SUBVOLUME="omarchy-root"
 
 # Boot-image pacman hooks that must not run while the image is built: there is
@@ -78,7 +78,7 @@ IMAGE_SUBVOLUME="omarchy-root"
 # the target root is not prepended), so mask them here, the same way the
 # orchestrator masks the live ISO's around its pacstrap. Keep in step with
 # DEFERRED_BOOT_HOOKS in
-# configs/airootfs/usr/share/omarchy-iso/orchestrator/phases_impl.py.
+# configs/airootfs/usr/share/omarchy-iso/orchestrator/install.sh.
 deferred_boot_hooks=(
   60-mkinitcpio-remove.hook
   60-limine-mkinitcpio-remove-pre.hook

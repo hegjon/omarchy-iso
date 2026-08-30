@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Live ISO entry point on tty1: set up the live VT, run the configurator
-# wizard, then hand off to the Python install orchestrator. Mirrors the
+# wizard, then hand off to the bash install orchestrator. Mirrors the
 # stream/env contract from the previously-working installer:
 #   - stdout teed to /var/log/omarchy-install.log (CSI-stripped) AND to tty
 #   - stderr direct to /dev/tty so gum (which draws its TUI on stderr)

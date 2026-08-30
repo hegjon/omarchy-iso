@@ -384,9 +384,10 @@ echo "[timing] root image end $(date +%s)"
 # the complete mirror at build time, but at install time only packages the
 # root image does not already hold can ever be downloaded from it: the
 # per-machine packages, and whatever omarchy-apply-system adds from
-# omarchy-other.packages. So the live root's customize_airootfs.sh removes
-# every package file the image already provides, at the same version, from
-# its copy of the mirror. The repo db stays complete on purpose: the hardware
+# omarchy-other.packages. So the shipped-package list below and
+# stage-mirror-files.sh keep every package file the image already provides,
+# at the same version, out of the medium's copy of the mirror. The repo db
+# stays complete on purpose: the hardware
 # scripts run `pacman -S --needed` over lists that mix packages the image has
 # with ones it lacks, and pacman must still resolve every name, even the ones
 # it then skips as up to date.
@@ -490,7 +491,7 @@ mkdir -p "$build_cache_dir/airootfs/var/cache/omarchy/mirror/offline"
 # plus the kernel's closure on top of it, resolved against the image's own
 # local db with the pruned mirror, which is the question the installer's delta
 # pacstrap asks. Plus one for the microcode package every real machine gets.
-# phases.py records expected and actual in the timing JSON, so drift shows up
+# phases.sh records expected and actual in the timing JSON, so drift shows up
 # in acceptance runs.
 resolve_expected_packages() {
   local resolve_root=/tmp/omarchy-expected-packages

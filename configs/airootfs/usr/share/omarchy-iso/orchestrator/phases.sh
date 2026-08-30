@@ -12,7 +12,6 @@ PHASE_CURRENT_NAME='Starting installation'
 PHASE_STARTED_AT=''
 PHASE_TOTAL=0
 PHASE_RUN_STARTED_AT=''
-PHASE_FINISHED=false
 
 add_phase() {
   PHASE_NAMES+=("$1")
@@ -89,7 +88,6 @@ phases_run() {
 
   PHASE_CURRENT_INDEX=$((PHASE_TOTAL > 0 ? PHASE_TOTAL - 1 : 0))
   PHASE_CURRENT_NAME='Installation complete'
-  PHASE_FINISHED=true
   # Expected vs actual for the bar's denominator, so drift is visible in
   # acceptance runs rather than only by watching a bar creep.
   local final

@@ -1,7 +1,7 @@
 release/**
 vm-saves/**
 
-# Python bytecode (orchestrator)
+# Python bytecode (test tooling)
 __pycache__/
 *.pyc
 

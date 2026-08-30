@@ -3,7 +3,7 @@
 # per-run state that lives across phases. Port of context.py; everything is a
 # CTX_* global since the phases run in one shell.
 
-CTX_CONFIG_PATH='' CTX_CREDS_PATH='' CTX_FULL_NAME='' CTX_EMAIL='' CTX_ENCRYPT=false
+CTX_CREDS_PATH='' CTX_FULL_NAME='' CTX_EMAIL='' CTX_ENCRYPT=false
 CTX_AUTHORIZED_KEYS_PATH='' CTX_TAILSCALE_AUTHKEY_PATH=''
 CTX_USER_CONFIGURATION='{}' CTX_USER_CREDENTIALS='{}' CTX_ARCH_CONFIG_PATH='' CTX_OMARCHY_INSTALL='{}'
 CTX_DEFER_PROVISIONING=false
@@ -28,7 +28,6 @@ ctx_from_env() {
   local config_str=${OMARCHY_INSTALL_CONFIG:-} creds_str=${OMARCHY_INSTALL_CREDS:-}
   [[ -n $config_str && -n $creds_str ]] || config_error 'OMARCHY_INSTALL_CONFIG and OMARCHY_INSTALL_CREDS must be set'
 
-  CTX_CONFIG_PATH=$config_str
   CTX_CREDS_PATH=$creds_str
   [[ -f $config_str ]] || config_error "configuration file missing: $config_str"
   CTX_USER_CONFIGURATION=$(jq -c . "$config_str") || config_error "invalid JSON in $config_str"

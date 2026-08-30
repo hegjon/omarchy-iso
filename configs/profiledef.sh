@@ -48,7 +48,6 @@ file_permissions=(
   ["/usr/local/bin/omarchy-install-dashboard"]="0:0:755"
   ["/usr/local/bin/omarchy-install-diagnose-media"]="0:0:755"
   ["/usr/local/bin/omarchy-iso-install"]="0:0:755"
-  ["/usr/local/bin/omarchy-upload-log"]="0:0:755"
   ["/usr/local/bin/omarchy-verify-mirror"]="0:0:755"
   # Copied in by build-iso.sh from the vendored archinstall-bash tree; mkarchiso
   # drops file modes on copy, so the executables must be declared here too.
