@@ -1,7 +1,9 @@
 # shellcheck shell=bash
 # Install context: parsed configurator output, invocation paths, and the
-# per-run state that lives across phases. Port of context.py; everything is a
-# CTX_* global since the phases run in one shell.
+# per-run state that lives across phases. Port of context.py; each phase
+# unit's run-phase rebuilds the CTX_* globals in its own process from the
+# persisted env files, and the cross-phase mutable state below travels via
+# run-phase's library-state handoff.
 
 CTX_CREDS_PATH='' CTX_FULL_NAME='' CTX_EMAIL='' CTX_ENCRYPT=false
 CTX_AUTHORIZED_KEYS_PATH='' CTX_TAILSCALE_AUTHKEY_PATH=''

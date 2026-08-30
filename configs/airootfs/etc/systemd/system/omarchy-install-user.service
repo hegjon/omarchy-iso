@@ -1,6 +1,6 @@
 [Unit]
 Description=Finalize the user on the install target
-# Sixth migrated phase: omarchy-provision-user in the target's chroot as the
+# omarchy-provision-user in the target's chroot as the
 # install's user. Deferred-provisioning installs skip inside the phase
 # function itself — user creation belongs to first boot there.
 PartOf=omarchy-install.target

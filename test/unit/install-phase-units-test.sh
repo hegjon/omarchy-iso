@@ -107,7 +107,6 @@ error_handover() {
   d=$(mktemp -d) || return 1
   sed -n '/^run_phase_cleanup() {/,/^}/p' "$ORCH/run-phase" >"$d/fn.sh"
   bash -c '
-    umount() { :; }
     source "'"$d"'/fn.sh"
     CTX_STATE_DIR="'"$d"'"
     ORCH_LAST_ERROR="install medium is corrupt: re-flash it"

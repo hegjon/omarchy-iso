@@ -1,9 +1,8 @@
 [Unit]
 Description=Configure hibernation on the install target
-# Second migrated phase: omarchy-hibernation-setup in the target's chroot,
-# hosted by run-phase. After= the image unit is the graph accreting: the
-# orchestrator still serializes the phases, and the edge documents the order
-# the eventual all-units install will enforce by itself.
+# omarchy-hibernation-setup in the target's chroot, hosted by run-phase.
+# System boot configuration, so it follows the base finishers and precedes
+# the system finalizer in the chain.
 PartOf=omarchy-install.target
 After=omarchy-install-base.service
 Requires=omarchy-install-base.service

@@ -1,6 +1,7 @@
 # shellcheck shell=bash
-# What main()'s finally did in Python: CPU governors, bind mounts, hook masks
-# and the protected target are put back on every exit path. All idempotent.
+# What main()'s finally did in Python: CPU governors, hook masks and the
+# protected target are put back on every exit path (mounts are systemd's:
+# PartOf= the install target tears them down). All idempotent.
 
 # The live hook masks install_system_payload puts up around pacstrap; Python
 # restored them in that phase's finally.

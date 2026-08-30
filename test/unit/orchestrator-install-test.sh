@@ -23,7 +23,7 @@ for fn in require_target_is_mnt installer_mount_ordered_layout installer_set_mir
           installer_minimal_installation installer_setup_swap installer_create_users applications_install \
           installer_add_additional_packages installer_set_timezone installer_activate_time_synchronization \
           installer_set_user_password installer_genfstab installer_finish \
-          mount_offline_package_cache unmount_offline_package_cache configure_limine_boot \
+          unmount_offline_package_cache configure_limine_boot \
           start_target_keyring_init \
           write_pre_mounted_fstab; do
   eval "$fn() { record \"$fn\${*:+ \$*}\"; }"

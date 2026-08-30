@@ -3,10 +3,11 @@ Description=Offline package mirror on the install target's pacman cache
 # pacman's [offline] repo is file:// out of the live mirror; without this
 # bind, pacstrap into the target copies every package from that repository
 # into the target's cache and then extracts it, duplicating several GiB of
-# I/O. Mounted for the duration of package installation and unmounted before
-# genfstab, so the live-only bind can never leak into the installed system's
-# fstab -- the orchestrator starts and stops this unit where it used to call
-# mount/umount itself.
+# I/O. Brought up by the strap unit's RequiresMountsFor= for the duration
+# of package installation, and released with umount(8) by the base phase
+# before genfstab, so the live-only bind can never leak into the installed
+# system's fstab (a stop job would conflict with the phase chain's in-flight
+# transaction; see unmount_offline_package_cache).
 #
 # The unit name is bound to Where= by systemd's path escaping, which pins
 # the install target at /mnt (CTX_TARGET in orchestrator/context.env).

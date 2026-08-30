@@ -1,8 +1,10 @@
 [Unit]
 Description=Create the factory snapshot of the install target
-# The last phase: join the keyring unit (systemd state, readable from any
-# process), then snapshot @ as the factory baseline. Its stage mount is
-# registered per process and run-phase unmounts it if the phase dies.
+# The terminal phase of the graph: join the keyring unit (systemd state,
+# readable from any process), then snapshot @ as the factory baseline. Its
+# stage mount (factory-top) is a systemd-mount transient, PartOf= the
+# install target, so a mid-phase death unmounts it with the group
+# teardown.
 PartOf=omarchy-install.target
 After=omarchy-install-validate-boot.service omarchy-target-keyring.service
 Requires=omarchy-install-validate-boot.service

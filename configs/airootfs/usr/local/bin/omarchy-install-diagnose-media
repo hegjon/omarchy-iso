@@ -4,7 +4,7 @@
 # that name the fix.
 #
 # The ISO's offline mirror is bind-mounted onto the target's package cache for
-# the duration of pacstrap (see _mount_offline_package_cache), so a package
+# the duration of pacstrap (mnt-var-cache-pacman-pkg.mount), so a package
 # pacman calls corrupt under that path is a byte that came off the medium --
 # nothing else ever writes there. That much is certain, and it is the part
 # worth saying out loud, because the failure screen otherwise ends at "get help

@@ -1,9 +1,9 @@
 [Unit]
 Description=Finalize the Limine boot setup on the install target
-# Fifth migrated phase: the final limine-update (UKI build) in the target's
+# The final limine-update (UKI build) in the target's
 # chroot plus the boot-config validations around it. Everything it reads is
 # the target's own disk state — the PART_*-derived cmdline was written into
-# /etc/default/limine by configure_limine_boot inside the install phase,
+# /etc/default/limine by configure_limine_boot inside the strap phase,
 # which is where the partition arrays live and stay.
 PartOf=omarchy-install.target
 After=omarchy-install-provisioning.service

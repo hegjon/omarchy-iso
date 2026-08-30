@@ -1,6 +1,6 @@
 [Unit]
 Description=Apply the Omarchy system configuration to the install target
-# Third migrated phase: omarchy-apply-system in the target's chroot, with the
+# omarchy-apply-system in the target's chroot, with the
 # boot-image pacman hooks masked around it (the mask lives on the target's
 # disk, and the orchestrator's exit trap unmasks by name whatever happens to
 # this process — the failure contract is process-independent by design).

@@ -1,6 +1,6 @@
 [Unit]
 Description=Stage first-boot provisioning state on the install target
-# Fourth migrated phase: the Node tarball stash on every install, and for
+# The Node tarball stash on every install, and for
 # deferred-provisioning installs the first-boot service arming and the LUKS
 # auto-unlock keyfile. Everything it reads is rebuilt by run-phase's context
 # load — including the generated LUKS passphrase, which ctx_from_env now
