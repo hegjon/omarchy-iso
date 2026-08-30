@@ -238,9 +238,12 @@ install_root_image() {
 
   local top="$CTX_STATE_DIR/image-top"
   mkdir -p "$top"
-  mount -o subvolid=5 "$RIMG_DEVICE" "$top"
-  # Listed so the exit trap unmounts it if the unpack fails mid-way.
-  CTX_BIND_MOUNTS+=("$top")
+  # A transient mount unit (the device is only known at run time, so no
+  # static unit file can name it): PartOf= the install target means a
+  # mid-phase death unmounts it with the group teardown, with no per-process
+  # trap bookkeeping.
+  systemd-mount --quiet -o subvolid=5 --property=PartOf=omarchy-install.target \
+    "$RIMG_DEVICE" "$top" || fail "could not mount the target filesystem's top level at $top"
 
   local received="$top/$ROOT_IMAGE_SUBVOLUME"
   if [[ -e $received ]]; then
@@ -274,8 +277,7 @@ install_root_image() {
   replay_target_mounts
   ((swap_rc == 0)) || fail "could not swap the root image in for @"
 
-  umount "$top" >/dev/null 2>&1 || true
-  unset 'CTX_BIND_MOUNTS[-1]'
+  systemd-umount --quiet "$top" >/dev/null 2>&1 || true
 
   local pkg missing=()
   while IFS= read -r pkg; do

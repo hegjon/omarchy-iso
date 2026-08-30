@@ -100,15 +100,17 @@ findmnt() { # -no COL path
 }
 mount() { record "mount $*"; mkdir -p "${*: -1}/@"; }
 umount() { record "umount $*"; }
+systemd-mount() { record "systemd-mount $*"; mkdir -p "${*: -1}/@"; }
+systemd-umount() { record "systemd-umount $*"; }
 btrfs() { record "btrfs $*"; }
 fresh_target; CTX_DEFER_PROVISIONING=false
 run_phase create_factory_snapshot
 check 'phase ok' eq "$?" 0
 top="$CTX_STATE_DIR/factory-top"
-check 'top level mounted' contains "$(calls)" "mount -o subvolid=5 /dev/mapper/omarchy_root $top"
+check 'top level mounted' contains "$(calls)" "systemd-mount --quiet -o subvolid=5 --property=PartOf=omarchy-install.target /dev/mapper/omarchy_root $top"
 check 'snapshot taken' contains "$(calls)" "btrfs subvolume snapshot $top/@ $top/@factory"
 check 'read-only' contains "$(calls)" "btrfs property set -ts $top/@factory ro true"
-check 'unmounted' contains "$(calls)" "umount $top"
+check 'unmounted' contains "$(calls)" "systemd-umount --quiet $top"
 
 fresh_target; CTX_DEFER_PROVISIONING=false
 factory="$CTX_STATE_DIR/factory-top/@factory"
@@ -123,10 +125,10 @@ check 'kept groups' test -e "$factory/var/lib/omarchy/provisioning/groups"
 
 fresh_target; CTX_DEFER_PROVISIONING=false; FM_FSTYPE=ext4
 run_phase create_factory_snapshot
-check 'non-btrfs skips' test -z "$(calls | grep '^mount' || true)"
+check 'non-btrfs skips' test -z "$(calls | grep -E '^(systemd-)?mount' || true)"
 FM_FSTYPE=btrfs FM_OPTIONS='rw,noatime'
 fresh_target; CTX_DEFER_PROVISIONING=false
 run_phase create_factory_snapshot
-check 'non-subvol root skips' test -z "$(calls | grep '^mount' || true)"
+check 'non-subvol root skips' test -z "$(calls | grep -E '^(systemd-)?mount' || true)"
 
 finish

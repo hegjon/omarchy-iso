@@ -80,7 +80,6 @@ fresh_target() {
   CTX_AUTHORIZED_KEYS_PATH=''
   CTX_TAILSCALE_AUTHKEY_PATH=''
   CTX_IS_PROTECTED=false
-  CTX_BIND_MOUNTS=()
   reset_calls
 }
 

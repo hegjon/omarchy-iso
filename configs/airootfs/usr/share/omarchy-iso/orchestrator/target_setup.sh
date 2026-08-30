@@ -42,17 +42,18 @@ debug_log() {
 
 prepare_target_setup() {
   [[ $CTX_TARGET_SETUP_PREPARED == true ]] && return 0
+  require_target_is_mnt
 
   cp /etc/pacman.conf "$CTX_TARGET/etc/pacman.conf"
 
-  local src target_dst
-  for src in /var/cache/omarchy/mirror/offline /opt/packages; do
-    target_dst="$CTX_TARGET${src}"
-    mkdir -p "$target_dst"
-    if ! list_contains "${CTX_BIND_MOUNTS[*]}" "$target_dst"; then
-      mount --bind "$src" "$target_dst"
-      CTX_BIND_MOUNTS+=("$target_dst")
-    fi
+  # Static mount units: starting an already-active mount is a no-op, so the
+  # phase units that share this helper cannot stack a second bind the way
+  # repeated mount --bind calls could, and PartOf= the install target
+  # unmounts them on any group teardown.
+  local unit
+  for unit in mnt-var-cache-omarchy-mirror-offline.mount mnt-opt-packages.mount; do
+    systemctl start "$unit" ||
+      fail "could not bind the live tree into the target: journalctl -u $unit"
   done
 
   CTX_TARGET_SETUP_PREPARED=true

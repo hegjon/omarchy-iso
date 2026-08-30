@@ -1,0 +1,17 @@
+[Unit]
+Description=Live package staging directory on the install target
+# The target-setup chroots read /opt/packages the way the live system does
+# (local-source builds stage packages there); this shows it inside the
+# target. Started by prepare_target_setup -- systemctl start is idempotent,
+# so the many phase units that share that helper cannot stack a second bind
+# the way repeated mount --bind calls could.
+#
+# A group abort stops omarchy-install.target (the orchestrator's exit trap),
+# and PartOf= takes this mount down with it.
+PartOf=omarchy-install.target
+
+[Mount]
+What=/opt/packages
+Where=/mnt/opt/packages
+Type=none
+Options=bind

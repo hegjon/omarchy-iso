@@ -2,14 +2,6 @@
 # What main()'s finally did in Python: CPU governors, bind mounts, hook masks
 # and the protected target are put back on every exit path. All idempotent.
 
-cleanup_bind_mounts() {
-  local mount_point
-  for mount_point in "${CTX_BIND_MOUNTS[@]}"; do
-    umount "$mount_point" >/dev/null 2>&1 || true
-  done
-  CTX_BIND_MOUNTS=()
-}
-
 # The live hook masks arch_install_system puts up around pacstrap; Python
 # restored them in that phase's finally.
 cleanup_live_hook_masks() {
@@ -74,7 +66,6 @@ orchestrator_on_exit() {
   # No-op after a completed install (create_factory_snapshot joined it); on a
   # failure it ends the unit before the target is torn down.
   stop_target_keyring_init
-  cleanup_bind_mounts
   cleanup_live_hook_masks
   cleanup_target_hook_masks
   [[ $ORCH_SUCCESS == true ]] || cleanup_protected_state

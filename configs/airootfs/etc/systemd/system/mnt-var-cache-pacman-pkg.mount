@@ -1,0 +1,27 @@
+[Unit]
+Description=Offline package mirror on the install target's pacman cache
+# pacman's [offline] repo is file:// out of the live mirror; without this
+# bind, pacstrap into the target copies every package from that repository
+# into the target's cache and then extracts it, duplicating several GiB of
+# I/O. Mounted for the duration of package installation and unmounted before
+# genfstab, so the live-only bind can never leak into the installed system's
+# fstab -- the orchestrator starts and stops this unit where it used to call
+# mount/umount itself.
+#
+# The unit name is bound to Where= by systemd's path escaping, which pins
+# the install target at /mnt (CTX_TARGET in orchestrator/context.env).
+RequiresMountsFor=/var/cache/omarchy/mirror/offline
+# The install group's lifecycle is the cleanup path: a group abort stops
+# omarchy-install.target (the orchestrator's exit trap), and PartOf= takes
+# this mount down with it -- the unmount happens on every exit path without
+# any trap bookkeeping in the orchestrator.
+PartOf=omarchy-install.target
+
+[Mount]
+What=/var/cache/omarchy/mirror/offline
+Where=/mnt/var/cache/pacman/pkg
+Type=none
+# The source is the medium's read-only ISO9660 shown at a second path; pacman
+# never needs to write here, since the [offline] repo's CacheDir is this same
+# directory and every package it wants is already "cached".
+Options=bind

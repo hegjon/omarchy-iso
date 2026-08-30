@@ -373,12 +373,13 @@ create_factory_snapshot() {
 
   local top="$CTX_STATE_DIR/factory-top"
   mkdir -p "$top"
-  mount -o subvolid=5 "$device" "$top"
-  # Listed so the exit trap unmounts it if the snapshot fails mid-way.
-  CTX_BIND_MOUNTS+=("$top")
+  # A transient mount unit (the device is only known at run time): PartOf=
+  # the install target means a mid-phase death unmounts it with the group
+  # teardown, with no per-process trap bookkeeping.
+  systemd-mount --quiet -o subvolid=5 --property=PartOf=omarchy-install.target \
+    "$device" "$top" || fail "could not mount the target filesystem's top level at $top"
   factory_snapshot_in "$top"
-  umount "$top" >/dev/null 2>&1 || true
-  unset 'CTX_BIND_MOUNTS[-1]'
+  systemd-umount --quiet "$top" >/dev/null 2>&1 || true
 }
 
 # The phase as its systemd unit (PartOf=omarchy-install.target); the

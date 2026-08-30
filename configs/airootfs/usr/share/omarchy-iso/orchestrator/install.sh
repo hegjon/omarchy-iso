@@ -236,10 +236,16 @@ arch_install_system() {
 # bind mount, pacman copies every package from the ISO's file:// repository
 # into that cache and then extracts it, duplicating several GiB of I/O.
 # Mount the already-populated offline repository at the target cache for the
-# duration of package installation. It is unmounted before genfstab so the
-# live-only bind can never leak into the installed system's fstab.
+# duration of package installation, as a systemd mount unit: PartOf= the
+# install target means a group abort unmounts it on every exit path, with no
+# trap bookkeeping here. It is stopped before genfstab so the live-only bind
+# can never leak into the installed system's fstab. The unit's Where= pins
+# the target at /mnt; fail loudly if CTX_TARGET ever diverges from it.
+OFFLINE_CACHE_MOUNT_UNIT=mnt-var-cache-pacman-pkg.mount
+
 mount_offline_package_cache() {
-  local source=/var/cache/omarchy/mirror/offline target="$CTX_TARGET/var/cache/pacman/pkg"
+  local source=/var/cache/omarchy/mirror/offline
+  require_target_is_mnt
   [[ -d $source ]] || fail "offline package cache missing: $source"
   # The mirror lives on the boot medium, mounted here by
   # var-cache-omarchy-mirror-offline.mount. An empty directory means that mount
@@ -248,18 +254,12 @@ mount_offline_package_cache() {
   # saying so once, now, before the target is touched.
   mountpoint -q "$source" ||
     fail "offline package mirror is not mounted at $source: the mirror on the install medium (arch/x86_64/mirror) did not mount"
-  mkdir -p "$target"
-  mount --bind "$source" "$target"
-  CTX_BIND_MOUNTS+=("$target")
+  systemctl start "$OFFLINE_CACHE_MOUNT_UNIT" ||
+    fail "could not bind the offline mirror onto the target package cache: journalctl -u $OFFLINE_CACHE_MOUNT_UNIT"
 }
 
 unmount_offline_package_cache() {
-  local target="$CTX_TARGET/var/cache/pacman/pkg" kept=() m
-  umount "$target"
-  for m in "${CTX_BIND_MOUNTS[@]}"; do
-    [[ $m == "$target" ]] || kept+=("$m")
-  done
-  CTX_BIND_MOUNTS=("${kept[@]}")
+  systemctl stop "$OFFLINE_CACHE_MOUNT_UNIT"
 }
 
 DEFERRED_BOOT_HOOKS=(

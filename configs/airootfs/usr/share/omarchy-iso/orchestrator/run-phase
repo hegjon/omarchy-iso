@@ -38,23 +38,19 @@ if [[ ${RUN_PHASE_NO_TARGET:-} != 1 ]] && ! mountpoint -q "$CTX_TARGET"; then
   fail "run-phase: $CTX_TARGET is not a mounted install target; refusing to run $phase before the disk phase"
 fi
 
-# The hosted phase registers its stage mounts in CTX_BIND_MOUNTS for the
-# orchestrator's exit trap — but that array lives per process, and this is
-# not the orchestrator's process. Mirror the trap here: on a failing exit,
-# unmount whatever this phase mounted, so a mid-phase death does not leak a
-# stage mount (image-top, factory-top) that no other process knows about.
-# A clean exit leaves nothing: the phases unmount their own on success.
+# The phase's stage mounts (image-top, factory-top) are systemd mounts with
+# PartOf=omarchy-install.target: a mid-phase death is followed by the
+# orchestrator stopping the target, and the group teardown unmounts them —
+# no per-process mount bookkeeping here. What this trap still owns is the
+# error handover, on a failing exit only.
 run_phase_cleanup() {
-  local status=$? mount_point
+  local status=$?
   ((status != 0)) || return 0
   # The phase's own words, for the orchestrator's failure message: fail()
   # recorded them in this process, and the journal buries them under
   # sha256sum output and systemd's exit lines — hand them over directly.
   [[ -z ${ORCH_LAST_ERROR:-} ]] ||
     printf '%s' "$ORCH_LAST_ERROR" >"$CTX_STATE_DIR/phase-error" 2>/dev/null
-  for mount_point in "${CTX_BIND_MOUNTS[@]}"; do
-    umount "$mount_point" >/dev/null 2>&1 || true
-  done
 }
 trap run_phase_cleanup EXIT
 

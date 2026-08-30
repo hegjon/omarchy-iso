@@ -13,7 +13,6 @@ CTX_USERNAME='' CTX_MODE='' CTX_IS_PROTECTED=false
 # shellcheck source=configs/airootfs/usr/share/omarchy-iso/orchestrator/context.env
 source "${BASH_SOURCE[0]%/*}/context.env"
 # Mutable per-run state shared across phases (ctx.state in Python).
-CTX_BIND_MOUNTS=()
 CTX_TARGET_SETUP_PREPARED=false
 CTX_OMARCHY_START_TIME='' CTX_OMARCHY_START_EPOCH=''
 CTX_FINALIZER_HEADER_WRITTEN=false
@@ -21,6 +20,14 @@ CTX_FINALIZER_HEADER_WRITTEN=false
 config_error() {
   error "Configuration error: $*"
   exit 2
+}
+
+# The static .mount units (mnt-*.mount) hard-code their Where= under /mnt,
+# which pins the install target: every mount into the target goes through
+# systemd, so fail loudly if CTX_TARGET ever diverges from the units' paths.
+require_target_is_mnt() {
+  [[ $CTX_TARGET == /mnt ]] ||
+    fail "the shipped .mount units pin the install target at /mnt but the target is $CTX_TARGET"
 }
 
 # InstallContext.from_env()

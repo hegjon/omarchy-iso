@@ -78,28 +78,26 @@ check "run-phase refuses a phase before the disk phase mounted the target" \
   bash -c "$(declare -f run_phase_env); fixtures='$fixtures'; ROOT='$ROOT'
     run_phase_env '$ORCH/run-phase' config_summary 2>&1 | grep -q 'not a mounted install target'"
 
-# run-phase's failure-path mount cleanup: the hosted phase registers stage
-# mounts in a per-process array, so the entrypoint must unmount them itself
-# when the phase dies — and must not touch them on a clean exit, where the
-# phase already unmounted its own.
+# run-phase's exit trap owns only the error handover (stage mounts are
+# systemd mounts torn down by PartOf= when the target stops): a clean exit
+# must hand nothing over, or a stale message from an earlier attempt would
+# headline a phase that succeeded.
 cleanup_trap_mechanics() {
   local d
   d=$(mktemp -d) || return 1
   sed -n '/^run_phase_cleanup() {/,/^}/p' "$ORCH/run-phase" >"$d/fn.sh"
-  UNMOUNT_LOG="$d/log" bash -c '
-    umount() { echo "UNMOUNTED:$1" >>"$UNMOUNT_LOG"; }
+  bash -c '
     source "'"$d"'/fn.sh"
-    CTX_BIND_MOUNTS=(/stage/a /stage/b)
-    (exit 7); run_phase_cleanup
-    CTX_BIND_MOUNTS=(/stage/c)
+    CTX_STATE_DIR="'"$d"'"
+    ORCH_LAST_ERROR="should never be written"
     (exit 0); run_phase_cleanup
   '
-  local got
-  got=$(cat "$d/log" 2>/dev/null)
+  local rc=0
+  [[ -e $d/phase-error ]] && rc=1
   rm -rf "$d"
-  [[ $got == $'UNMOUNTED:/stage/a\nUNMOUNTED:/stage/b' ]]
+  return "$rc"
 }
-check "run-phase unmounts the phase's stage mounts on a failing exit only" cleanup_trap_mechanics
+check "run-phase hands nothing over on a clean exit" cleanup_trap_mechanics
 
 # And hands the phase's own fail() message to the orchestrator through the
 # state dir — the journal buries it under command output and systemd's exit
@@ -111,7 +109,7 @@ error_handover() {
   bash -c '
     umount() { :; }
     source "'"$d"'/fn.sh"
-    CTX_STATE_DIR="'"$d"'"; CTX_BIND_MOUNTS=()
+    CTX_STATE_DIR="'"$d"'"
     ORCH_LAST_ERROR="install medium is corrupt: re-flash it"
     (exit 1); run_phase_cleanup
   '

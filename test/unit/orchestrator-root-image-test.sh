@@ -108,6 +108,8 @@ findmnt() {
 }
 mount() { record "mount $*"; }
 umount() { record "umount $*"; }
+systemd-mount() { record "systemd-mount $*"; }
+systemd-umount() { record "systemd-umount $*"; }
 umount_tree() { record "umount_tree $1"; }
 btrfs() { record "btrfs $*"; }
 mv() { record "mv $*"; }
@@ -120,7 +122,7 @@ omarchy_nvim_package() { echo omarchy-nvim; }
 run_phase install_root_image
 check 'phase ok' eq "$?" 0
 check 'received at the top level, swapped in with the layout down' eq "$(calls | tr '\n' ';')" \
-"mount -o subvolid=5 /dev/vda2 $CTX_STATE_DIR/image-top;receive $CTX_STATE_DIR/image-top;btrfs subvolume snapshot $CTX_STATE_DIR/image-top/omarchy-root $CTX_STATE_DIR/image-top/@.image;btrfs subvolume delete $CTX_STATE_DIR/image-top/omarchy-root;umount_tree $CTX_TARGET;btrfs subvolume delete $CTX_STATE_DIR/image-top/@;mv $CTX_STATE_DIR/image-top/@.image $CTX_STATE_DIR/image-top/@;mount -t btrfs -o rw,subvol=/@ /dev/vda2 $CTX_TARGET;mount -t btrfs -o rw,subvol=/@home /dev/vda2 $CTX_TARGET/home;umount $CTX_STATE_DIR/image-top;has_package limine;has_package omarchy-keyring;has_package omarchy;has_package omarchy-settings;has_package omarchy-nvim;machine-id --root=$CTX_TARGET;"
+"systemd-mount --quiet -o subvolid=5 --property=PartOf=omarchy-install.target /dev/vda2 $CTX_STATE_DIR/image-top;receive $CTX_STATE_DIR/image-top;btrfs subvolume snapshot $CTX_STATE_DIR/image-top/omarchy-root $CTX_STATE_DIR/image-top/@.image;btrfs subvolume delete $CTX_STATE_DIR/image-top/omarchy-root;umount_tree $CTX_TARGET;btrfs subvolume delete $CTX_STATE_DIR/image-top/@;mv $CTX_STATE_DIR/image-top/@.image $CTX_STATE_DIR/image-top/@;mount -t btrfs -o rw,subvol=/@ /dev/vda2 $CTX_TARGET;mount -t btrfs -o rw,subvol=/@home /dev/vda2 $CTX_TARGET/home;systemd-umount --quiet $CTX_STATE_DIR/image-top;has_package limine;has_package omarchy-keyring;has_package omarchy;has_package omarchy-settings;has_package omarchy-nvim;machine-id --root=$CTX_TARGET;"
 
 section 'a missing required package fails the phase'
 reset_calls
