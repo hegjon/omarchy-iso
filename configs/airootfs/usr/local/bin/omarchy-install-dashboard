@@ -8,14 +8,13 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 <log-file> <state-file> -- <installer command...>" >&2
+  echo "Usage: $0 <log-file> -- <installer command...>" >&2
   exit 2
 }
 
-(( $# >= 4 )) || usage
+(( $# >= 3 )) || usage
 LOG_FILE="$1"
-STATE_FILE="$2"
-shift 2
+shift 1
 [[ ${1:-} == "--" ]] || usage
 shift
 (( $# > 0 )) || usage
@@ -178,8 +177,8 @@ FINISH_TOP_ROW=2
 #          <target>/var/lib/pacman/local; the denominator comes from
 #          build-iso.sh, so there is no second package list to drift.
 #          The root image unpack is its own phase now ("Unpacking root
-#          image"); it publishes phase_progress (stream bytes consumed) in
-#          the state file, which drives its own band below.
+#          image"); it publishes its fraction (stream bytes consumed) as
+#          the unit's sd_notify STATUS=, which drives its own band below.
 #
 # Per-mille because a whole-percent asymptote over a 2-point band has two
 # reachable values and stops moving. No give-up predicate: two discontinuous
@@ -204,6 +203,96 @@ PROGRESS_PM=10
 VERIFY_PCT=-1          # honest percent of the pre-flight verify, -1 when idle
 NOW=0                  # monotonic seconds, refreshed once per frame
 DASH_T0=0
+
+# ── Phase state: the systemd unit graph ──────────────────────────────────────
+#
+# The phase units latch (RemainAfterExit=yes), so the graph itself is the
+# install's state and systemd's records are the only copy: active means done,
+# activating means running, failed means failed, and a self-measuring phase
+# publishes its fraction as the unit's sd_notify STATUS=. One `systemctl
+# show` over the roster per frame reads all of it. The roster and the
+# display names come from the unit files (a phase unit is exactly a unit
+# whose ExecStart runs run-phase; the display name is its second argument),
+# ordered by walking each unit's Requires= edge back from the terminal.
+UNITS_DIR="${OMARCHY_INSTALL_UNITS_DIR:-/etc/systemd/system}"
+INSTALL_TARGET="${OMARCHY_INSTALL_TARGET:-/mnt}"
+INSTALL_STATE_DIR="${OMARCHY_INSTALL_STATE_DIR:-/run/omarchy-install}"
+
+PHASE_UNITS=()
+PHASE_DISPLAY=()
+build_phase_roster() {
+  local f unit req name line terminal=""
+  local -A display=() requires=() required_by=() seen=()
+  for f in "$UNITS_DIR"/omarchy-install-*.service; do
+    [[ -f $f ]] || continue
+    line=$(grep -m1 -E '^ExecStart=.*run-phase ' "$f" 2>/dev/null) || continue
+    unit=${f##*/}
+    name=${line#*run-phase *\"}
+    name=${name%%\"*}
+    display[$unit]=$name
+    req=$(grep -m1 -oE '^Requires=omarchy-install-[a-z-]+\.service' "$f" 2>/dev/null | cut -d= -f2) || req=""
+    requires[$unit]=$req
+    [[ -n $req ]] && required_by[$req]=$unit
+  done
+  for unit in "${!display[@]}"; do
+    [[ -z ${required_by[$unit]:-} ]] && terminal=$unit
+  done
+  local chain=()
+  unit=$terminal
+  while [[ -n $unit && -n ${display[$unit]:-} && -z ${seen[$unit]:-} ]]; do
+    seen[$unit]=1
+    chain=("$unit" "${chain[@]}")
+    unit=${requires[$unit]:-}
+  done
+  PHASE_UNITS=("${chain[@]}")
+  PHASE_DISPLAY=()
+  for unit in "${PHASE_UNITS[@]}"; do
+    PHASE_DISPLAY+=("${display[$unit]}")
+  done
+}
+build_phase_roster
+PHASE_TOTAL=${#PHASE_UNITS[@]}
+
+# One poll of the graph. Sets PHASE_CUR_NAME (running phase, or the next
+# pending one between phases; empty before any unit ran), PHASE_DONE (count
+# of latched units), PHASE_FINISHED (terminal latched), PHASE_FAILED_NAME,
+# and PHASE_STATUS_TEXT (the running unit's sd_notify STATUS=).
+read_phase_state() {
+  PHASE_CUR_NAME="" PHASE_DONE=0 PHASE_FINISHED=0
+  PHASE_FAILED_NAME="" PHASE_STATUS_TEXT=""
+  (( PHASE_TOTAL > 0 )) || return 0
+  local line key i=0
+  local -a state=() status=()
+  while IFS= read -r line; do
+    if [[ -z $line ]]; then
+      i=$((i + 1))
+      continue
+    fi
+    key=${line%%=*}
+    case "$key" in
+      ActiveState) state[i]=${line#*=} ;;
+      StatusText) status[i]=${line#*=} ;;
+    esac
+  done < <(systemctl show "${PHASE_UNITS[@]}" -p ActiveState,StatusText 2>/dev/null)
+  for ((i = 0; i < PHASE_TOTAL; i++)); do
+    case "${state[i]:-}" in
+      active) PHASE_DONE=$((i + 1)) ;;
+      activating)
+        PHASE_CUR_NAME=${PHASE_DISPLAY[i]}
+        PHASE_STATUS_TEXT=${status[i]:-}
+        ;;
+      failed) PHASE_FAILED_NAME=${PHASE_DISPLAY[i]} ;;
+    esac
+  done
+  [[ ${state[PHASE_TOTAL - 1]:-} == active ]] && PHASE_FINISHED=1
+  # Between phases (the gap is milliseconds) the next pending unit stands
+  # in; before the graph starts the caller's default names the pre-graph
+  # orchestrator work.
+  if [[ -z $PHASE_CUR_NAME ]] && (( ! PHASE_FINISHED && PHASE_DONE > 0 && PHASE_DONE < PHASE_TOTAL )); then
+    PHASE_CUR_NAME=${PHASE_DISPLAY[PHASE_DONE]}
+  fi
+  return 0
+}
 PHASE_NAME=""          # last phase this process observed
 PHASE_T0=0             # NOW when it was first observed
 PHASE_LO=10            # POS on entry, for an unknown phase with no index
@@ -298,30 +387,23 @@ count_packages() {
 # and the package counters must survive between frames. Print nothing — output
 # here would land on the TTY between the cursor escape and the bar.
 install_progress() {
-  local phase finished index total target
+  local phase index total target
   local lo hi tau span t pos work gap n pkg_signal=0 progress_pm
-  local -a state
 
   PROGRESS_PM=$POS
   VERIFY_PCT=-1
-  [[ -f $STATE_FILE ]] || return 0
 
-  mapfile -t state < <(jq -r '
-    (.current_phase // "Starting installation"),
-    ((.finished_at // 0) | tonumber? // 0 | floor),
-    ((.current_index // -1) | tonumber? // -1 | floor),
-    ((.total_phases // 0) | tonumber? // 0 | floor),
-    (.target // "/mnt"),
-    ((.phase_progress // -1) | tonumber? // -1 | . * 1000 | floor)
-  ' "$STATE_FILE" 2>/dev/null)
-  (( ${#state[@]} == 6 )) || return 0
-  phase="${state[0]}" finished="${state[1]}"
-  index="${state[2]}" total="${state[3]}" target="${state[4]}"
-  progress_pm="${state[5]}"
-  [[ $progress_pm =~ ^-?[0-9]+$ ]] || progress_pm=-1
-  [[ -n $target ]] || target="/mnt"
+  read_phase_state
+  phase=${PHASE_CUR_NAME:-"Starting installation"}
+  index=$PHASE_DONE total=$PHASE_TOTAL target=$INSTALL_TARGET
+  # A self-measuring phase publishes "progress=<fraction>" as its unit's
+  # sd_notify STATUS=; anything else in the status text is not for us.
+  progress_pm=-1
+  if [[ $PHASE_STATUS_TEXT =~ progress=(1(\.0*)?|0(\.[0-9]+)?) ]]; then
+    progress_pm=$(awk -v p="${BASH_REMATCH[1]}" 'BEGIN { printf "%d", p * 1000 }')
+  fi
 
-  if (( finished > 0 )) || [[ $phase == "Installation complete" ]]; then
+  if (( PHASE_FINISHED )); then
     POS=1000
     PROGRESS_PM=1000
     return 0
@@ -499,20 +581,21 @@ render_dynamic() {
 }
 
 install_duration() {
-  local path line duration
+  local path line duration secs
 
-  if [[ -f $STATE_FILE ]]; then
-    duration="$(jq -r '
-      ((.started_at // 0) | tonumber? // 0) as $started
-      | ((.finished_at // 0) | tonumber? // 0) as $finished
-      | if $started <= 0 or $finished <= 0 or $finished < $started then empty
-        else (($finished - $started) | round) as $secs
-          | if $secs >= 3600 then "\($secs / 3600 | floor)h \($secs % 3600 / 60 | floor)m \($secs % 60)s"
-            else "\($secs / 60 | floor)m \($secs % 60)s"
-            end
-        end
-    ' "$STATE_FILE" 2>/dev/null || true)"
-    [[ -n $duration ]] && { printf '%s' "$duration"; return 0; }
+  # This process launched the installer and outlived it, so its own clock is
+  # the duration -- the frame clock was set right before the child spawned.
+  if (( DASH_T0 > 0 )); then
+    set_now
+    secs=$(( NOW - DASH_T0 ))
+    if (( secs > 0 )); then
+      if (( secs >= 3600 )); then
+        printf '%dh %dm %ds' "$(( secs / 3600 ))" "$(( secs % 3600 / 60 ))" "$(( secs % 60 ))"
+      else
+        printf '%dm %ds' "$(( secs / 60 ))" "$(( secs % 60 ))"
+      fi
+      return 0
+    fi
   fi
 
   for path in /mnt/var/log/omarchy-install.log "$LOG_FILE"; do
@@ -609,7 +692,7 @@ TARGET_RELEASED=yes
 
 release_target() {
   local target out line
-  target=$(jq -r '.target // "/mnt"' "$STATE_FILE" 2>/dev/null) || target=/mnt
+  target=$INSTALL_TARGET
   # Swapoff, umount, mapper close — shared with the orchestrator's failure
   # cleanup. On failure the script names the holders on stderr; forward that
   # into the install log, where the diagnosis is worth more than a shrug.
@@ -943,8 +1026,11 @@ child_pgid=""
 dashboard_log "installer child exited with status $status"
 
 if (( status == 0 )); then
-  # finished_at lands microseconds before the child exits, so the 0.5s poll
-  # rarely renders a full bar before the finish screen replaces it.
+  # The orchestrator's exit trap stops the install target on its way out, so
+  # by now the latch a poll would read is already torn down -- the child's
+  # clean exit is the finish signal. Complete the bar before the finish
+  # screen replaces it.
+  POS=1000
   render_dynamic >"$TTY_PATH" 2>/dev/null || true
   sleep 0.4
 fi
@@ -952,17 +1038,22 @@ fi
 if (( status != 0 )); then
   failure_status="$status"
   failure_summary=""
-  if [[ -f $STATE_FILE ]]; then
-    failure_summary="$(jq -r '
-      (.current_phase // empty | "last installer phase: \(.)"),
-      ((.phases // []) | map(select(.status == "failed")) | last // empty
-        | "failed phase: \(.name): \(.error)")
-    ' "$STATE_FILE" 2>/dev/null || true)"
-    if [[ -n $failure_summary ]]; then
-      while IFS= read -r line; do
-        [[ -n $line ]] && dashboard_log "$line"
-      done <<<"$failure_summary"
-    fi
+  # A failed phase unit keeps its failed state through the group teardown
+  # (stop is a no-op on it), and its own last words were handed over
+  # through the state dir; a death outside any phase leaves neither, and
+  # the log tail on the failure screen carries that story.
+  read_phase_state || true
+  phase_error="$(cat "$INSTALL_STATE_DIR/phase-error" 2>/dev/null || true)"
+  last_phase="${PHASE_FAILED_NAME:-$PHASE_CUR_NAME}"
+  [[ -n $last_phase ]] && failure_summary="last installer phase: $last_phase"
+  if [[ -n $PHASE_FAILED_NAME ]]; then
+    nl=$'\n'
+    failure_summary+="${failure_summary:+$nl}failed phase: $PHASE_FAILED_NAME: ${phase_error:-see the log above}"
+  fi
+  if [[ -n $failure_summary ]]; then
+    while IFS= read -r line; do
+      [[ -n $line ]] && dashboard_log "$line"
+    done <<<"$failure_summary"
   fi
   failure_media_diagnosis="$(diagnose_media || true)"
   render_failure "$failure_status" "$failure_summary" "$failure_media_diagnosis" >"$TTY_PATH" 2>/dev/null || true

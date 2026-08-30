@@ -24,7 +24,7 @@
 
 arch_init_library() {
   declare -F config_load >/dev/null || fail 'archinstall-bash is not loaded (main.sh sources it before the orchestrator modules)'
-  # The library's die() exits the phase; record its message for state.json.
+  # The library's die() exits the phase; record its message for the handover.
   ARCHINSTALL_ON_DIE=orchestrator_record_error
 }
 

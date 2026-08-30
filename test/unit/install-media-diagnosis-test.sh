@@ -257,8 +257,24 @@ mkdir -p "$stubs"
 } >"$stubs/omarchy-install-diagnose-media"
 chmod +x "$stubs/omarchy-install-diagnose-media"
 
-state_file="$work/state.json"
 screen="$work/screen"
+
+# The failed-phase state the dashboard reads from systemd: one phase unit in
+# a fixture roster, a stub systemctl reporting it failed, and the phase's
+# own words handed over through the state dir -- the same three pieces a
+# real failed install leaves behind.
+units_dir="$work/units"
+state_dir="$work/state"
+mkdir -p "$units_dir" "$state_dir"
+printf '[Service]\nExecStart=/usr/share/omarchy-iso/orchestrator/run-phase arch_install_system "Installing Arch + Omarchy"\n' \
+  >"$units_dir/omarchy-install-strap.service"
+printf 'Pacstrap failed. See /var/log/archinstall.log' >"$state_dir/phase-error"
+cat >"$stubs/systemctl" <<'EOF'
+#!/bin/bash
+[[ ${1:-} == show ]] || exit 0
+printf 'ActiveState=failed\nStatusText=\n'
+EOF
+chmod +x "$stubs/systemctl"
 
 # A ten-line logo, the height of the real one. Without it the dashboard falls
 # back to a single centred word and the screen can never be tall enough to
@@ -276,15 +292,10 @@ mkdir -p "$omarchy_share"
 run_dashboard() {
   local install_log="$1"
 
-  # A real failure carries the failed phase as well as the current one, and
-  # that second summary line is another row the screen has to find space for.
-  cat >"$state_file" <<'STATE'
-{"current_phase": "Installing Arch + Omarchy",
- "phases": [{"name": "Installing Arch + Omarchy", "status": "failed",
-             "error": "Pacstrap failed. See /var/log/archinstall.log"}]}
-STATE
+  # A real failure carries the failed phase's summary lines as well, and
+  # each is another row the screen has to find space for.
   : >"$screen"
-  script -qefc "stty rows 40 cols 120; PATH='$stubs:$PATH' OMARCHY_PATH='$omarchy_share' OMARCHY_UI_INTERACTIVE=no OMARCHY_UI_FAILURE_ACTION=exit OMARCHY_FAILURE_TAIL_LOG='$install_log' '$DASHBOARD' '$install_log' '$state_file' -- bash -c 'exit 1'" \
+  script -qefc "stty rows 40 cols 120; PATH='$stubs:$PATH' OMARCHY_PATH='$omarchy_share' OMARCHY_INSTALL_UNITS_DIR='$units_dir' OMARCHY_INSTALL_STATE_DIR='$state_dir' OMARCHY_UI_INTERACTIVE=no OMARCHY_UI_FAILURE_ACTION=exit OMARCHY_FAILURE_TAIL_LOG='$install_log' '$DASHBOARD' '$install_log' -- bash -c 'exit 1'" \
     "$screen" >/dev/null 2>&1
 }
 

@@ -43,9 +43,8 @@ check_absent() { # desc, needle, haystack
 
 BOX=$(mktemp -d)
 trap 'rm -rf "$BOX"' EXIT
-mkdir -p "$BOX/bin" "$BOX/omarchy"
+mkdir -p "$BOX/bin" "$BOX/omarchy" "$BOX/units"
 printf 'OMARCHY\n' >"$BOX/omarchy/logo.txt"
-printf '{"target": "%s/mnt", "started_at": 0, "finished_at": 62}\n' "$BOX" >"$BOX/state.json"
 
 # The release helper the dashboard shells out to, standing in for the real
 # sweep: it echoes the diagnosis a failing sweep writes to stderr and takes
@@ -68,19 +67,12 @@ cat >"$BOX/bin/ttfx" <<'EOF'
 #!/bin/bash
 exit 0
 EOF
-# Just enough jq that the test does not hinge on the host having the real
-# one: the target query answers from the state file, anything else answers
-# empty (install_duration then falls through to its log parsing).
+# A no-op jq so the test does not hinge on the host having the real one:
+# nothing under test consults it any more (the target comes from the
+# environment and the duration from the dashboard's own clock).
 cat >"$BOX/bin/jq" <<'EOF'
 #!/bin/bash
-prog=
-for arg in "$@"; do
-  case $arg in -*) ;; *) prog=$arg; break ;; esac
-done
-if [[ $prog == *.target* ]]; then
-  target=$(sed -n 's/.*"target": *"\([^"]*\)".*/\1/p' "${@: -1}")
-  echo "${target:-/mnt}"
-fi
+exit 0
 EOF
 chmod +x "$BOX"/bin/*
 
@@ -109,7 +101,8 @@ scenario() { # function-to-call, release_rc  ->  sets TTY_OUT, LOG_OUT, CALLS
     PATH="$BOX/bin:$PATH"
     exec 9>"$BOX/tty.fifo"
     OMARCHY_DASHBOARD_TTY="$BOX/tty.fifo" OMARCHY_PATH="$BOX/omarchy" \
-      source "$BOX/dashboard-defs.sh" "$BOX/install.log" "$BOX/state.json" -- true
+      OMARCHY_INSTALL_TARGET="$BOX/mnt" OMARCHY_INSTALL_UNITS_DIR="$BOX/units" \
+      source "$BOX/dashboard-defs.sh" "$BOX/install.log" -- true
     release_target
     echo "$TARGET_RELEASED" >"$BOX/released"
     [[ $fn == release_target ]] || "$fn"
@@ -124,7 +117,7 @@ scenario() { # function-to-call, release_rc  ->  sets TTY_OUT, LOG_OUT, CALLS
 # ── The verdict itself ───────────────────────────────────────────────────────
 scenario release_target 0
 check "a clean sweep leaves the target released" "yes" "$RELEASED"
-check_has "the helper is given the target from the state file" "release-helper $BOX/mnt" "$CALLS"
+check_has "the helper is given the target from the environment" "release-helper $BOX/mnt" "$CALLS"
 check_absent "a clean sweep logs no failure" "could not release" "$LOG_OUT"
 
 scenario release_target 1

@@ -82,16 +82,17 @@ main() {
   trap orchestrator_on_interrupt INT TERM
 
   arch_init_library
-  phases_seed_state
+  mkdir -p "$CTX_STATE_DIR"
   # Stale handoffs from an aborted earlier attempt in the same session must
   # not leak into this run.
   rm -f "$CTX_STATE_DIR/phase-error" "$CTX_STATE_DIR/library-state.sh"
 
   # One blocking start of the terminal phase: its Requires=/After= chain
-  # pulls every phase in order, each recording itself into state.json from
-  # its own process. A failed phase fails its start job and the chain stops
-  # there -- collect the phase's own words (handed over via the state dir;
-  # the journal buries them under command output and systemd's exit lines).
+  # pulls every phase in order; the latched units themselves are the record
+  # the dashboard polls. A failed phase fails its start job and the chain
+  # stops there -- collect the phase's own words (handed over via the state
+  # dir; the journal buries them under command output and systemd's exit
+  # lines).
   local failed_unit
   if ! systemctl start "$PHASE_GRAPH_TERMINAL"; then
     failed_unit=$(systemctl list-units --failed --plain --no-legend 'omarchy-install-*' 2>/dev/null |

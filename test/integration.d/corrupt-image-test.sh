@@ -19,7 +19,8 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 CORRUPT_ISO="$BASE_DIR/corrupt.iso"
 STREAM=arch/x86_64/omarchy-root.btrfs.zst
 VERIFY_UNIT=omarchy-root-image-verify.service
-STATE=/run/omarchy-install/state.json
+GATE_UNIT=omarchy-install-prepare-target.service
+PHASE_ERROR=/run/omarchy-install/phase-error
 
 # ------------------------------------------------------------------ fixture
 
@@ -88,7 +89,7 @@ install_from_corrupt_medium() {
   sleep 2
   capture_console "success-installer-stopped"
   ssh_live_root "cat /var/log/omarchy-install.log" >"$RUN_DIR/omarchy-install.log" 2>/dev/null || true
-  ssh_live_root "cat $STATE" >"$RUN_DIR/state.json" 2>/dev/null || true
+  ssh_live_root "systemctl list-units --all --no-legend 'omarchy-install-*'; echo; cat $PHASE_ERROR 2>/dev/null" >"$RUN_DIR/phase-state" 2>/dev/null || true
   ssh_live_root "journalctl -b -u $VERIFY_UNIT -o short-precise --no-pager" >"$RUN_DIR/verify-unit.journal" 2>/dev/null || true
 }
 
@@ -100,13 +101,13 @@ assert_refused() {
   check "verify unit failed on the corrupt image" \
     ssh_live_root "systemctl show -p Result --value $VERIFY_UNIT | grep -qx exit-code"
   check "install halted in the pre-flight phase" \
-    ssh_live_root "jq -e '[.phases[] | select(.status == \"failed\") | .name] == [\"Preparing install target\"]' $STATE"
+    ssh_live_root "[ \"\$(systemctl list-units --failed --plain --no-legend 'omarchy-install-*' | awk '{print \$1}')\" = $GATE_UNIT ]"
   check "the error tells the user to re-flash the medium" \
-    ssh_live_root "jq -r '.phases[] | select(.status == \"failed\") | .error' $STATE | grep -q 'install medium is corrupt: re-flash it'"
+    ssh_live_root "grep -q 'install medium is corrupt: re-flash it' $PHASE_ERROR"
   check "the error carries sha256sum's verdict" \
-    ssh_live_root "jq -r '.phases[] | select(.status == \"failed\") | .error' $STATE | grep -q 'did NOT match'"
+    ssh_live_root "grep -q 'did NOT match' $PHASE_ERROR"
   check "nothing ran after the pre-flight phase" \
-    ssh_live_root "jq -e '[.phases[] | select(.status == \"ok\") | .name] == [\"Preparing live environment\"]' $STATE"
+    ssh_live_root "journalctl -b -u omarchy-install-prepare-live.service --no-pager | grep -q Finished && [ \"\$(systemctl show -p ExecMainStartTimestampMonotonic --value omarchy-install-disk.service)\" = 0 ]"
   check "target disk has no partition table" \
     ssh_live_root "! lsblk -rno TYPE /dev/vda | grep -qx part && ! blkid /dev/vda"
   check "dashboard shows the installation stopped" \

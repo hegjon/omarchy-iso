@@ -10,6 +10,12 @@ Requires=omarchy-install-disk.service
 
 [Service]
 Type=oneshot
+# Latched: the dashboard reads the graph itself as install state -- active
+# means done, inactive means pending, and the timestamps survive for the
+# timing record. NotifyAccess lets any process in the phase publish
+# sd_notify STATUS= progress.
+RemainAfterExit=yes
+NotifyAccess=all
 # The install context: path defaults, this run's resolved values, and the
 # raw inputs ctx_from_env rebuilds the rest from (later files win).
 EnvironmentFile=/usr/share/omarchy-iso/orchestrator/context.env

@@ -88,10 +88,8 @@ fi
 # the actual installer as a non-interactive child, logs child output, waits for
 # completion, then renders the final installed-time/reboot prompt itself.
 export OMARCHY_DASHBOARD_TTY="$(tty)"
-rm -f /run/omarchy-install/state.json
 /usr/local/bin/omarchy-install-dashboard \
   "$OMARCHY_INSTALL_LOG_FILE" \
-  /run/omarchy-install/state.json \
   -- \
   /usr/local/bin/omarchy-iso-install \
     --config /root/user_configuration.json \

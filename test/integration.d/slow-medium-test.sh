@@ -22,7 +22,8 @@
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
 VERIFY_UNIT=omarchy-root-image-verify.service
-STATE=/run/omarchy-install/state.json
+GATE_UNIT=omarchy-install-prepare-target.service
+PHASE_ERROR=/run/omarchy-install/phase-error
 
 # Slow enough that hashing the multi-GB image cannot beat the timeout, fast
 # enough that the live system boots promptly: the image needs 90+ s at this
@@ -85,7 +86,7 @@ install_from_slow_medium() {
   # which hides exactly the window this scenario exists to pin down.
   log "Waiting for the installer to reach the verify gate"
   local gated=0
-  until ssh_live_root "jq -e '.current_phase == \"Preparing install target\"' $STATE" >/dev/null 2>&1; do
+  until ssh_live_root "systemctl show -p ActiveState --value $GATE_UNIT | grep -qx activating" >/dev/null 2>&1; do
     if ! vm_running; then
       echo "VM exited before the installer reached the verify gate" >&2
       return 1
@@ -163,7 +164,7 @@ install_from_slow_medium() {
   sleep 2
   capture_console "success-installer-stopped"
   ssh_live_root "cat /var/log/omarchy-install.log" >"$RUN_DIR/omarchy-install.log" 2>/dev/null || true
-  ssh_live_root "cat $STATE" >"$RUN_DIR/state.json" 2>/dev/null || true
+  ssh_live_root "systemctl list-units --all --no-legend 'omarchy-install-*'; echo; cat $PHASE_ERROR 2>/dev/null" >"$RUN_DIR/phase-state" 2>/dev/null || true
   ssh_live_root "journalctl -b -u $VERIFY_UNIT -o short-precise --no-pager" >"$RUN_DIR/verify-unit.journal" 2>/dev/null || true
 }
 
@@ -175,11 +176,11 @@ assert_named_slow() {
   check "verify unit ended in a start timeout" \
     ssh_live_root "systemctl show -p Result --value $VERIFY_UNIT | grep -qx timeout"
   check "install halted in the pre-flight phase" \
-    ssh_live_root "jq -e '[.phases[] | select(.status == \"failed\") | .name] == [\"Preparing install target\"]' $STATE"
+    ssh_live_root "[ \"\$(systemctl list-units --failed --plain --no-legend 'omarchy-install-*' | awk '{print \$1}')\" = $GATE_UNIT ]"
   check "the error names the slow medium" \
-    ssh_live_root "jq -r '.phases[] | select(.status == \"failed\") | .error' $STATE | grep -q 'install medium is too slow: try another USB stick or port'"
+    ssh_live_root "grep -q 'install medium is too slow: try another USB stick or port' $PHASE_ERROR"
   check "nothing ran after the pre-flight phase" \
-    ssh_live_root "jq -e '[.phases[] | select(.status == \"ok\") | .name] == [\"Preparing live environment\"]' $STATE"
+    ssh_live_root "journalctl -b -u omarchy-install-prepare-live.service --no-pager | grep -q Finished && [ \"\$(systemctl show -p ExecMainStartTimestampMonotonic --value omarchy-install-disk.service)\" = 0 ]"
   check "target disk has no partition table" \
     ssh_live_root "! lsblk -rno TYPE /dev/vda | grep -qx part && ! blkid /dev/vda"
   # The stopped-banner renders red on dark, which OCR misreads; the log

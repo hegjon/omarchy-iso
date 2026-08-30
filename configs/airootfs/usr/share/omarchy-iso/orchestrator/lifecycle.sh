@@ -50,14 +50,12 @@ orchestrator_on_exit() {
   trap - EXIT ERR INT TERM
   if [[ $ORCH_SUCCESS != true ]]; then
     if [[ $ORCH_INTERRUPTED == true ]]; then
-      phases_record_failure 'interrupted'
       error 'Installation interrupted.'
       status=130
     else
-      # A phase that failed recorded itself from its own process;
-      # phases_record_failure self-guards against telling it twice, and
-      # covers what no phase could record -- a death outside the graph.
-      phases_record_failure "${ORCH_LAST_ERROR:-install exited with status $status}"
+      # A failed phase is already systemd's record (the unit's Result) and
+      # main's fail() already headlined it; nothing to write here but the
+      # closing line.
       error 'Installation halted.'
       [[ $status -ne 0 ]] || status=1
     fi

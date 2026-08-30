@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# The file-backed phase state main.sh and run-phase share: seeded by the
-# orchestrator, entered/left by each phase's own process, finalized on
-# success, with the failure fallback recording exactly once. Drives the real
-# helpers against a throwaway state dir the way the two processes do.
+# The systemd-backed phase state: progress published over sd_notify, the
+# timing record generated from systemd's own unit timestamps, and the exit
+# trap's cleanup. The unit graph itself is the install's state now -- there
+# is no parallel document to seed, enter or finalize per phase.
 # shellcheck disable=SC1091
 source "$(dirname -- "${BASH_SOURCE[0]}")/orchestrator-harness.sh"
 
@@ -13,81 +13,95 @@ stop_target_keyring_init() { record stop_target_keyring_init; }
 systemctl() { record "systemctl $*"; }
 error() { printf '%s\n' "$*" >&2; }
 
-# The roster is counted off the shipped unit files; the sandbox has none.
-phase_unit_count() { echo 2; }
-
-state() { jq -r "$1" "$CTX_STATE_DIR/state.json"; }
-
-# One phase's life as run-phase lives it.
-simulate_phase() { # name, ok|failed, [error]
-  local started
-  phases_enter "$1"
-  started=$(now)
-  phases_leave "$1" "$2" "$started" "${3:-}"
-}
-
-section 'success: seed, two phases, finalize'
-fresh_target
-phases_seed_state
-check 'seeded pending' eq "$(state '"\(.current_phase)/\(.total_phases)"')" 'Starting installation/2'
-simulate_phase 'phase one' ok
-check 'first recorded' eq "$(state '.phases[0] | "\(.name):\(.status)"')" 'phase one:ok'
-simulate_phase 'phase two' ok
-phases_finalize
-check 'all phases ok' eq "$(state '[.phases[].status] | join(",")')" 'ok,ok'
-check 'complete' eq "$(state .current_phase)" 'Installation complete'
-check 'finished_at' test "$(state .finished_at)" != null
-check 'index/total' eq "$(state '"\(.current_index)/\(.total_phases)"')" 1/2
-check 'target published' eq "$(state .target)" "$CTX_TARGET"
-check 'timing copy in target' test -f "$CTX_TARGET/var/log/omarchy-install-timing.json"
-
-section 'a phase failure is recorded once'
-fresh_target
-phases_seed_state
-simulate_phase 'phase one' ok
-simulate_phase 'phase two' failed 'boom'
-# The orchestrator's exit trap fires after the graph start fails; the
-# phase already told its story, so the fallback must not tell it twice.
-phases_record_failure 'install phase omarchy-install-two.service failed' 2>/dev/null
-check 'recorded exactly once' eq "$(state '.phases | length')" 2
-check 'the phase’s own words' eq "$(state '.phases[-1] | "\(.name):\(.status):\(.error)"')" 'phase two:failed:boom'
-
-section 'a failure no phase recorded falls back to current_phase'
-fresh_target
-phases_seed_state
-phases_enter 'phase interrupted'
-phases_record_failure 'interrupted' 2>/dev/null
-check 'fallback recorded' eq "$(state '.phases[-1] | "\(.name):\(.status):\(.error)"')" 'phase interrupted:failed:interrupted'
-check 'started stamp cleared' eq "$(state '.phase_started_at // "gone"')" gone
-
-section 'progress: clamped, phase-scoped'
-fresh_target
-phases_seed_state
-phases_enter 'measuring phase'
-phases_write_progress 1.5
-check 'clamped high' eq "$(state .phase_progress)" 1
-phases_write_progress 0.25
-check 'fraction kept' eq "$(state .phase_progress)" 0.25
+section 'progress rides sd_notify STATUS='
+systemd-notify() { record "systemd-notify $* socket=${NOTIFY_SOCKET:-}"; }
+reset_calls
+# Unset in a subshell: a desktop session exports its own NOTIFY_SOCKET, and
+# in production the unit's own socket must win when present.
+(unset NOTIFY_SOCKET; phases_write_progress 0.25)
+check 'fraction published' contains "$(calls)" '--status=progress=0.25'
+check 'socket defaulted for watcher subshells' contains "$(calls)" 'socket=/run/systemd/notify'
+reset_calls
+(NOTIFY_SOCKET=/run/unit/socket phases_write_progress 0.25)
+check 'the unit-provided socket wins' contains "$(calls)" 'socket=/run/unit/socket'
+reset_calls
 phases_write_progress bogus
-check 'garbage ignored' eq "$(state .phase_progress)" 0.25
-phases_enter 'next phase'
-check 'cleared on the next phase' eq "$(state '.phase_progress // "gone"')" gone
+phases_write_progress ''
+check 'garbage never reaches systemd' eq "$(calls)" ''
+# Progress is best effort: a notify failure must never fail the phase.
+systemd-notify() { return 1; }
+check 'a failed notify is swallowed' phases_write_progress 0.5
+unset -f systemd-notify
 
-section 'exit trap: cleanup on the failure path, once'
+section 'the timing record comes from the unit timestamps'
+fresh_target
+UNITS="$TMP/units"
+rm -rf "$UNITS"
+mkdir -p "$UNITS"
+export OMARCHY_INSTALL_UNITS_DIR="$UNITS"
+make_unit() { # unit-basename display-name
+  printf '[Service]\nExecStart=/usr/share/omarchy-iso/orchestrator/run-phase fn "%s"\n' \
+    "$2" >"$UNITS/omarchy-install-$1.service"
+}
+make_unit alpha 'First phase'
+make_unit beta 'Second phase'
+make_unit gamma 'Never ran'
+# Not a phase unit: no run-phase ExecStart, must not appear in the record.
+printf '[Service]\nExecStart=/usr/bin/true\n' >"$UNITS/omarchy-install-helper.service"
+# The stub answers `show <unit> -p ActiveState,Result,ExecMainStart...,ExecMainExit... --value`
+# in systemctl's --value format: one line per property, in the asked order.
+# beta started first and failed; alpha ran after it and succeeded (the sort
+# must follow the timestamps, not the file names); gamma never ran.
+systemctl() {
+  case "$2" in
+    omarchy-install-alpha.service) printf 'active\nsuccess\n2000000\n3500000\n' ;;
+    omarchy-install-beta.service) printf 'failed\nexit-code\n1000000\n1750000\n' ;;
+    omarchy-install-gamma.service) printf 'inactive\nsuccess\n0\n0\n' ;;
+    *) printf 'inactive\nsuccess\n0\n0\n' ;;
+  esac
+}
+mkdir -p "$CTX_TARGET/var/lib/pacman/local/pkg-one-1.0-1" "$CTX_TARGET/var/lib/pacman/local/pkg-two-1.0-1"
+expected_package_count() { printf 3; }
+phases_finalize
+TIMING="$CTX_TARGET/var/log/omarchy-install-timing.json"
+check 'timing copy in target' test -f "$TIMING"
+check 'phases in start order, only the ones that ran' \
+  eq "$(jq -r '[.phases[].name] | join(",")' "$TIMING")" 'Second phase,First phase'
+check 'status from the unit result' \
+  eq "$(jq -r '[.phases[].status] | join(",")' "$TIMING")" 'failed,ok'
+check 'elapsed from the monotonic pair' \
+  eq "$(jq -r '[.phases[].elapsed] | join(",")' "$TIMING")" '0.750,1.500'
+check 'package counts recorded' \
+  eq "$(jq -r '"\(.installed_packages)/\(.expected_packages)"' "$TIMING")" '2/3'
+check 'finished stamp present' test "$(jq -r .finished_at "$TIMING")" != null
+unset OMARCHY_INSTALL_UNITS_DIR
+systemctl() { record "systemctl $*"; }
+
+section 'exit trap: cleanup on the failure path'
 fresh_target
 reset_calls
 (
   set -eEuo pipefail
   trap 'orchestrator_on_err "$?" "$BASH_COMMAND" "${BASH_SOURCE[0]}" "$LINENO"' ERR
   trap orchestrator_on_exit EXIT
-  phases_seed_state
-  phases_enter 'phase doomed'
   fail 'graph start failed'
 ) 2>"$ERR"
 check 'exit 1' eq "$?" 1
-check 'failure recorded via fallback' eq "$(state '.phases[-1] | "\(.name):\(.status)"')" 'phase doomed:failed'
 check 'halt message' contains "$(cat "$ERR")" 'Installation halted.'
 check 'group abort issued' contains "$(calls)" 'systemctl stop omarchy-install.target'
 check 'cleanups ran' contains "$(calls)" cleanup_target_hook_masks
+
+section 'exit trap: an interrupt tells its own story'
+fresh_target
+reset_calls
+(
+  set -eEuo pipefail
+  trap orchestrator_on_exit EXIT
+  ORCH_INTERRUPTED=true
+  exit 130
+) 2>"$ERR"
+check 'exit 130' eq "$?" 130
+check 'interrupt message' contains "$(cat "$ERR")" 'Installation interrupted.'
+check 'group abort issued' contains "$(calls)" 'systemctl stop omarchy-install.target'
 
 finish
