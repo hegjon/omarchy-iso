@@ -8,12 +8,13 @@ Description=Stage first-boot provisioning state on the install target
 # stages the passphrase the disk was actually encrypted with.
 PartOf=omarchy-install.target
 After=omarchy-install-system.service
+Requires=omarchy-install-system.service
 
 [Service]
 Type=oneshot
 EnvironmentFile=/usr/share/omarchy-iso/orchestrator/context.env
 EnvironmentFile=-/run/omarchy-install/context.env
 EnvironmentFile=-/run/omarchy-install/install.env
-ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase stage_provisioning_state
+ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase stage_provisioning_state "Staging provisioning"
 # Copies a ~50 MB tarball and writes a keyfile; 4 s on a Core2. A stuck guard.
 TimeoutStartSec=300

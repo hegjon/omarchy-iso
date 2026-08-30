@@ -6,12 +6,13 @@ Description=Apply the Omarchy system configuration to the install target
 # this process — the failure contract is process-independent by design).
 PartOf=omarchy-install.target
 After=omarchy-install-hibernation.service
+Requires=omarchy-install-hibernation.service
 
 [Service]
 Type=oneshot
 EnvironmentFile=/usr/share/omarchy-iso/orchestrator/context.env
 EnvironmentFile=-/run/omarchy-install/context.env
 EnvironmentFile=-/run/omarchy-install/install.env
-ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase run_system_finalizer
+ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase run_system_finalizer "Configuring system"
 # 12.5 s on a Core2; fifteen minutes is a stuck-chroot guard, not a budget.
 TimeoutStartSec=900

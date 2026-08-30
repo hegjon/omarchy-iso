@@ -90,13 +90,6 @@ prepare_live() {
   arch_load_config
 }
 
-# The phase as its systemd unit (PartOf=omarchy-install.target); the
-# function above is what run-phase hosts in the unit's own process,
-# with the pre-format opt-out — no target exists yet.
-prepare_live_unit() {
-  run_phase_unit omarchy-install-prepare-live.service 'live preparation'
-}
-
 # _install_disk(): the device being wiped, or nothing for pre_mounted /
 # no-wipe configs.
 install_disk() {
@@ -123,13 +116,6 @@ prepare_install_target() {
   # "too slow", where mirror-first surfaces the earliest verdict there is.
   verify_offline_mirror
   verify_root_image_stream
-}
-
-# The phase as its systemd unit (PartOf=omarchy-install.target); the
-# function above is what run-phase hosts in the unit's own process,
-# with the pre-format opt-out — the gate runs before formatting.
-prepare_install_target_unit() {
-  run_phase_unit omarchy-install-prepare-target.service 'pre-flight gate'
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -161,17 +147,6 @@ install_disk_layout() {
   # What this phase discovered (device nodes, the UUIDs mkfs assigned) and
   # every later phase reads travels through run-phase's library-state
   # handoff -- see LIBRARY_STATE_VARS there.
-}
-
-install_disk_layout_unit() {
-  run_phase_unit omarchy-install-disk.service 'disk layout'
-}
-
-# Before anything writes into the target: the image replaces the (empty)
-# root subvolume the installer created, and everything written there first
-# would go with it.
-unpack_root_image_unit() {
-  run_phase_unit omarchy-install-image.service 'root image unpack'
 }
 
 install_system_payload() {
@@ -230,10 +205,6 @@ install_system_payload() {
   start_target_keyring_init
 }
 
-install_system_payload_unit() {
-  run_phase_unit omarchy-install-strap.service 'system payload'
-}
-
 finalize_base_system() {
   # Standard arch finishers.
   [[ -n $CFG_TIMEZONE ]] && { installer_set_timezone "$CFG_TIMEZONE" || true; }
@@ -249,10 +220,6 @@ finalize_base_system() {
   fi
 
   installer_finish
-}
-
-finalize_base_system_unit() {
-  run_phase_unit omarchy-install-base.service 'base finishers'
 }
 
 # Let pacstrap consume bundled packages without copying them first.

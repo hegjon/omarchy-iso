@@ -5,13 +5,14 @@ Description=Create the factory snapshot of the install target
 # registered per process and run-phase unmounts it if the phase dies.
 PartOf=omarchy-install.target
 After=omarchy-install-validate-boot.service omarchy-target-keyring.service
+Requires=omarchy-install-validate-boot.service
 
 [Service]
 Type=oneshot
 EnvironmentFile=/usr/share/omarchy-iso/orchestrator/context.env
 EnvironmentFile=-/run/omarchy-install/context.env
 EnvironmentFile=-/run/omarchy-install/install.env
-ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase create_factory_snapshot
+ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase create_factory_snapshot "Creating factory snapshot"
 # The keyring join is bounded by that unit's own 60 s; the snapshot itself
 # is CoW-instant. Ten minutes is a stuck guard.
 TimeoutStartSec=600

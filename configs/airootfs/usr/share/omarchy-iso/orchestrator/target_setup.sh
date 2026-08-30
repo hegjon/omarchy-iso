@@ -22,12 +22,6 @@ configure_hibernation() {
     /usr/bin/omarchy-hibernation-setup --force --no-rebuild
 }
 
-# The phase as its systemd unit (PartOf=omarchy-install.target); the
-# function above is what run-phase hosts in the unit's own process.
-configure_hibernation_unit() {
-  run_phase_unit omarchy-install-hibernation.service 'hibernation setup'
-}
-
 install_debug_enabled() {
   [[ ${OMARCHY_INSTALL_DEBUG:-} == 1 || -e /usr/share/omarchy-iso/install-debug ]]
 }
@@ -37,8 +31,6 @@ debug_log() {
   mkdir -p "${CTX_LOG_PATH%/*}"
   printf '[install-debug] %s\n' "$*" >>"$CTX_LOG_PATH"
 }
-
-
 
 prepare_target_setup() {
   [[ $CTX_TARGET_SETUP_PREPARED == true ]] && return 0
@@ -165,24 +157,12 @@ run_system_finalizer() {
   unmask_mkinitcpio_pacman_hooks "$CTX_TARGET" "${TARGET_DEFERRED_BOOT_HOOKS[@]}"
 }
 
-# The phase as its systemd unit (PartOf=omarchy-install.target); the
-# function above is what run-phase hosts in the unit's own process.
-run_system_finalizer_unit() {
-  run_phase_unit omarchy-install-system.service 'system configuration'
-}
-
 run_chroot_finalizer() {
   if [[ $CTX_DEFER_PROVISIONING == true ]]; then
     info '› deferred-provisioning install: user finalization deferred to first boot'
     return 0
   fi
   run_target_setup_command --user "$CTX_USERNAME" /usr/bin/omarchy-provision-user --force --first-install
-}
-
-# The phase as its systemd unit (PartOf=omarchy-install.target); the
-# function above is what run-phase hosts in the unit's own process.
-run_chroot_finalizer_unit() {
-  run_phase_unit omarchy-install-user.service 'user finalization'
 }
 
 read_omarchy_mirror() {

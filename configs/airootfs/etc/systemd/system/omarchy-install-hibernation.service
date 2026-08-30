@@ -5,14 +5,15 @@ Description=Configure hibernation on the install target
 # orchestrator still serializes the phases, and the edge documents the order
 # the eventual all-units install will enforce by itself.
 PartOf=omarchy-install.target
-After=omarchy-install-image.service
+After=omarchy-install-base.service
+Requires=omarchy-install-base.service
 
 [Service]
 Type=oneshot
 EnvironmentFile=/usr/share/omarchy-iso/orchestrator/context.env
 EnvironmentFile=-/run/omarchy-install/context.env
 EnvironmentFile=-/run/omarchy-install/install.env
-ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase configure_hibernation
+ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase configure_hibernation "Configuring hibernation"
 # Swapfile creation on btrfs is fallocate-fast (0.8 s on a Core2); five
 # minutes is a stuck-chroot guard, not a budget.
 TimeoutStartSec=300

@@ -10,13 +10,14 @@ Description=Install the package payload onto the target
 # process.
 PartOf=omarchy-install.target
 After=omarchy-install-image.service
+Requires=omarchy-install-image.service
 
 [Service]
 Type=oneshot
 EnvironmentFile=/usr/share/omarchy-iso/orchestrator/context.env
 EnvironmentFile=-/run/omarchy-install/context.env
 EnvironmentFile=-/run/omarchy-install/install.env
-ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase install_system_payload
+ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase install_system_payload "Installing Arch + Omarchy"
 # A few hundred MB of pacstraps off the medium; half an hour is a
 # dead-medium guard, not a budget (the boot verifies already proved the
 # mirror readable at full speed).

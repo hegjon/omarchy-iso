@@ -28,7 +28,6 @@ for fn in installer_mount_ordered_layout installer_set_mirrors \
           write_pre_mounted_fstab; do
   eval "$fn() { record \"$fn\${*:+ \$*}\"; }"
 done
-run_phase_unit() { record "run_phase_unit $1"; }
 mask_mkinitcpio_pacman_hooks() { record "mask $1"; }
 unmask_mkinitcpio_pacman_hooks() { record "unmask $1"; }
 
@@ -89,16 +88,35 @@ check 'live hooks unmasked after the last pacstrap' test "$(calls | grep -n 'app
 check 'keyring init started after the last pacstrap' test "$(calls | grep -n 'unmount_offline_package_cache\|start_target_keyring_init' | cut -d: -f1 | tr '\n' ' ')" == '13 14 '
 
 section 'phase wiring'
-# Executes the real build_phases (extracted from main.sh, which the harness
-# does not source) with a recording add_phase: the image unit must sit
-# between the disk phase and the payload, and the finishers must follow.
-WIRED=()
-add_phase() { WIRED+=("$2"); }
-eval "$(sed -n '/^build_phases() {/,/^}/p' "$ORCHESTRATOR/main.sh")"
-build_phases
-check 'split phases wired in order' contains ";$(printf '%s;' "${WIRED[@]}")" \
-  ';install_disk_layout_unit;unpack_root_image_unit;install_system_payload_unit;finalize_base_system_unit;'
-unset -f add_phase build_phases
+# Walks the real unit graph: from the terminal unit, follow each Requires=
+# on another phase unit back to the root. The chain must be one linear path
+# that covers every run-phase unit exactly once, and the canonical
+# disk -> image -> strap -> base order must sit inside it.
+walk_phase_graph() {
+  local units_dir="$ROOT/configs/airootfs/etc/systemd/system" chain=() unit=omarchy-install-factory-snapshot.service
+  local -A seen=()
+  local prev
+  while [[ -n $unit ]]; do
+    [[ -z ${seen[$unit]:-} ]] || { echo "cycle at $unit"; return 1; }
+    seen[$unit]=1
+    chain=("$unit" "${chain[@]}")
+    prev=$(grep -oE '^Requires=omarchy-install-[a-z-]+\.service' "$units_dir/$unit" 2>/dev/null | cut -d= -f2)
+    unit=$prev
+  done
+  local expected total
+  expected=$(grep -lE '^ExecStart=.*run-phase ' "$units_dir"/omarchy-install-*.service | wc -l)
+  total=${#chain[@]}
+  [[ $total == "$expected" ]] || { echo "chain covers $total of $expected phase units"; return 1; }
+  printf ';%s' "${chain[@]}"
+  printf ';'
+}
+GRAPH=$(walk_phase_graph) || { echo "$GRAPH"; false; }
+check 'the Requires= chain covers every phase unit' test -n "$GRAPH"
+check 'disk, image, strap, base sit in order inside it' contains "$GRAPH" \
+  'omarchy-install-disk.service;omarchy-install-image.service;omarchy-install-strap.service;omarchy-install-base.service;'
+check 'the chain begins at the live preparation' contains "$GRAPH" \
+  ';omarchy-install-prepare-live.service;omarchy-install-prepare-target.service;'
+check 'the chain ends at the factory snapshot' contains "$GRAPH" 'omarchy-install-factory-snapshot.service;'
 
 section 'pre-mounted target'
 reset; PRE_MOUNT=true; run_split

@@ -4,12 +4,13 @@ Description=Validate the boot setup on the install target
 # reads of the target's own disk state, hosted by run-phase.
 PartOf=omarchy-install.target
 After=omarchy-install-dns.service
+Requires=omarchy-install-dns.service
 
 [Service]
 Type=oneshot
 EnvironmentFile=/usr/share/omarchy-iso/orchestrator/context.env
 EnvironmentFile=-/run/omarchy-install/context.env
 EnvironmentFile=-/run/omarchy-install/install.env
-ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase validate_boot
+ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase validate_boot "Validating boot setup"
 # Read-only checks; five minutes is a stuck guard, not a budget.
 TimeoutStartSec=300

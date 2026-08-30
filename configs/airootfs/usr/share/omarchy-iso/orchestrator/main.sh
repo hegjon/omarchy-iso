@@ -36,34 +36,31 @@ for _module in context phases archinstall root_image install limine target_setup
 done
 unset _module
 
-# Phase order. The ordering is the whole point of this orchestrator:
-# package-install hooks (limine-mkinitcpio-hook, in particular) and useradd
-# happen at points where their prerequisites are guaranteed to be in place.
+# Phase order. The ordering was the whole point of this orchestrator, and it
+# now lives where systemd can walk it: every phase is a unit under
+# /etc/systemd/system/omarchy-install-*.service, each Requires= and After=
+# its predecessor, and starting the terminal unit pulls the whole chain in
+# order. The invariants the old loop's comments carried still hold by those
+# edges: package-install hooks (limine-mkinitcpio-hook, in particular) and
+# useradd happen at points where their prerequisites are in place, and the
+# deferred-provisioning cryptkey staging precedes the final UKI build.
 #
-# Full-disk and protected installs use the same phase sequence. The
-# configurator only changes the JSON input: full-disk asks the installer to
-# create/mount the layout, while protected provides an already-mounted target
-# and the partition details Omarchy needs for boot/fstab generation.
-build_phases() {
-  add_phase 'Preparing live environment' prepare_live_unit
-  add_phase 'Preparing install target' prepare_install_target_unit
-  add_phase 'Preparing disk layout' install_disk_layout_unit
-  add_phase 'Unpacking root image' unpack_root_image_unit
-  add_phase 'Installing Arch + Omarchy' install_system_payload_unit
-  add_phase 'Finalizing base system' finalize_base_system_unit
-  add_phase 'Configuring hibernation' configure_hibernation_unit
-  add_phase 'Configuring system' run_system_finalizer_unit
-  # Before finalize_limine_boot: the deferred-provisioning cryptkey drop-in
-  # and keyfile must be in place for the final UKI build.
-  add_phase 'Staging provisioning' stage_provisioning_state_unit
-  add_phase 'Finalizing Limine boot' finalize_limine_boot_unit
-  add_phase 'Finalizing user' run_chroot_finalizer_unit
-  add_phase 'Configuring login' configure_login_unit
-  add_phase 'Configuring SSH access' configure_ssh_access_unit
-  add_phase 'Configuring Tailscale' configure_tailscale_unit
-  add_phase 'Configuring DNS resolver' configure_dns_resolver_unit
-  add_phase 'Validating boot setup' validate_boot_unit
-  add_phase 'Creating factory snapshot' create_factory_snapshot_unit
+# Full-disk and protected installs walk the same graph. The configurator
+# only changes the JSON input: full-disk asks the installer to create/mount
+# the layout, while protected provides an already-mounted target and the
+# partition details Omarchy needs for boot/fstab generation.
+PHASE_GRAPH_TERMINAL=omarchy-install-factory-snapshot.service
+
+# The failed phase's own words, for the failure headline: fail() in the
+# phase's process handed them over via the state dir, and the journal
+# (where they sit buried under command output and systemd's exit lines) is
+# the fallback.
+phase_graph_failure_detail() {
+  local failed_unit=$1 detail
+  detail=$(cat "$CTX_STATE_DIR/phase-error" 2>/dev/null)
+  [[ -n $detail ]] ||
+    detail=$(journalctl --no-pager -o cat -b -u "$failed_unit" 2>/dev/null | tail -n 5 | tr '\n' ' ')
+  printf '%s' "$detail"
 }
 
 main() {
@@ -84,8 +81,28 @@ main() {
   trap orchestrator_on_interrupt INT TERM
 
   arch_init_library
-  build_phases
-  phases_run
+  phases_seed_state
+  # Stale handoffs from an aborted earlier attempt in the same session must
+  # not leak into this run.
+  rm -f "$CTX_STATE_DIR/phase-error" "$CTX_STATE_DIR/library-state.sh"
+
+  # One blocking start of the terminal phase: its Requires=/After= chain
+  # pulls every phase in order, each recording itself into state.json from
+  # its own process. A failed phase fails its start job and the chain stops
+  # there -- collect the phase's own words (handed over via the state dir;
+  # the journal buries them under command output and systemd's exit lines).
+  local detail failed_unit
+  if ! systemctl start "$PHASE_GRAPH_TERMINAL"; then
+    failed_unit=$(systemctl list-units --failed --plain --no-legend 'omarchy-install-*' 2>/dev/null |
+      awk '{print $1; exit}')
+    detail=$(cat "$CTX_STATE_DIR/phase-error" 2>/dev/null)
+    [[ -n $detail ]] ||
+      detail=$(journalctl --no-pager -o cat -b -u "${failed_unit:-$PHASE_GRAPH_TERMINAL}" 2>/dev/null |
+        tail -n 5 | tr '\n' ' ')
+    fail "install phase ${failed_unit:-graph} failed: $detail"
+  fi
+
+  phases_finalize
 
   ORCH_SUCCESS=true
   info 'Installation complete.'

@@ -119,23 +119,27 @@ error_handover() {
 }
 check "run-phase hands the phase's fail message over on a failing exit" error_handover
 
-run_phase_unit_prefers_handover() {
-  local d out
+graph_failure_prefers_handover() {
+  local d out fallback
   d=$(mktemp -d) || return 1
   out=$(bash -c '
-    # The unit writes the handover file on its way down, after run_phase_unit
-    # cleared any stale one — the stub mirrors that sequence.
-    systemctl() { [[ $1 == start ]] && { printf "install medium is too slow: try another USB stick" >"$CTX_STATE_DIR/phase-error"; return 1; }; echo mocked; }
     journalctl() { echo "systemd noise only"; }
-    fail() { echo "FAIL:$*"; exit 1; }
     CTX_STATE_DIR="'"$d"'"
-    '"$(sed -n '/^run_phase_unit() {/,/^}/p' "$ORCH/root_image.sh")"'
-    run_phase_unit some.unit "the gate"
+    printf "install medium is too slow: try another USB stick" >"$CTX_STATE_DIR/phase-error"
+    '"$(sed -n '/^phase_graph_failure_detail() {/,/^}/p' "$ORCH/main.sh")"'
+    phase_graph_failure_detail some.unit
+  ' 2>&1)
+  fallback=$(bash -c '
+    journalctl() { echo "systemd noise only"; }
+    CTX_STATE_DIR="'"$d"'/empty"
+    '"$(sed -n '/^phase_graph_failure_detail() {/,/^}/p' "$ORCH/main.sh")"'
+    phase_graph_failure_detail some.unit
   ' 2>&1)
   rm -rf "$d"
-  [[ $out == *"install medium is too slow"* && $out != *"systemd noise"* ]]
+  [[ $out == *"install medium is too slow"* && $out != *"systemd noise"* &&
+     $fallback == *"systemd noise only"* ]]
 }
-check "run_phase_unit prefers the handed-over message to the journal" run_phase_unit_prefers_handover
+check "the graph failure headline prefers the handed-over message to the journal" graph_failure_prefers_handover
 
 # The property the deferred-encrypted flavor of that phase depends on: the
 # generated LUKS passphrase is generated once and reused by every later

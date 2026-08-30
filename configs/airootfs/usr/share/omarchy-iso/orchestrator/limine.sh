@@ -259,12 +259,6 @@ finalize_limine_boot() {
   fi
 }
 
-# The phase as its systemd unit (PartOf=omarchy-install.target); the
-# function above is what run-phase hosts in the unit's own process.
-finalize_limine_boot_unit() {
-  run_phase_unit omarchy-install-limine.service 'Limine boot finalization'
-}
-
 strip_shell_quotes() {
   local v=$1
   v=${v#"${v%%[![:space:]]*}"}
@@ -367,12 +361,6 @@ validate_boot() {
   if [[ $CTX_DEFER_PROVISIONING == true ]]; then
     validate_provisioning_state
   fi
-}
-
-# The phase as its systemd unit (PartOf=omarchy-install.target); the
-# function above is what run-phase hosts in the unit's own process.
-validate_boot_unit() {
-  run_phase_unit omarchy-install-validate-boot.service 'boot validation'
 }
 
 # A deferred-provisioning install that boots without a working first-boot

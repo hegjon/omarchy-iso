@@ -52,8 +52,11 @@ orchestrator_on_exit() {
       phases_record_failure 'interrupted'
       error 'Installation interrupted.'
       status=130
-    elif [[ -n $PHASE_STARTED_AT ]]; then
-      phases_record_failure "${ORCH_LAST_ERROR:-phase exited with status $status}"
+    else
+      # A phase that failed recorded itself from its own process;
+      # phases_record_failure self-guards against telling it twice, and
+      # covers what no phase could record -- a death outside the graph.
+      phases_record_failure "${ORCH_LAST_ERROR:-install exited with status $status}"
       error 'Installation halted.'
       [[ $status -ne 0 ]] || status=1
     fi

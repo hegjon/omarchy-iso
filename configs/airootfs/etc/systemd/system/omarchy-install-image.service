@@ -7,6 +7,8 @@ Description=Unpack the Omarchy root image onto the install target
 # with the failure in the exit status. Pre-flight gates stay the
 # orchestrator's: by this point the stream is verified and the layout mounted.
 PartOf=omarchy-install.target
+After=omarchy-install-disk.service
+Requires=omarchy-install-disk.service
 
 [Service]
 Type=oneshot
@@ -15,7 +17,7 @@ Type=oneshot
 EnvironmentFile=/usr/share/omarchy-iso/orchestrator/context.env
 EnvironmentFile=-/run/omarchy-install/context.env
 EnvironmentFile=-/run/omarchy-install/install.env
-ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase install_root_image
+ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase install_root_image "Unpacking root image"
 # TimeoutStartSec comes from a build-time drop-in sized to the stream
 # (build-iso.sh writes 50-size-timeout.conf): oneshot units have no default
 # start timeout, and the receive reads the whole stream off the medium.

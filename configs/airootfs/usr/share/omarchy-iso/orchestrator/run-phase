@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
-# Host one orchestrator phase function in its own process, for the systemd
-# phase units: `run-phase install_root_image` is what
+# Host one orchestrator phase in its own process, for the systemd phase
+# units: `run-phase install_root_image "Unpacking root image"` is what
 # omarchy-install-image.service execs. Sources the same stack main.sh loads
 # (main.sh runs nothing when sourced), rebuilds the install context from the
 # persisted inputs the unit's EnvironmentFile= handed us, and calls the one
-# function. Its exit status is the unit's Result; its output is the journal.
+# function. Its exit status is the unit's Result; its output is the journal,
+# teed into the install log so the support artifact keeps the detail.
+#
+# The install's sequencing lives in the units' Requires=/After= edges, not
+# here and not in a loop: the orchestrator starts the terminal unit and
+# systemd walks the graph. What each phase owes the dashboard -- the
+# state.json record of who is running, who finished and how long they took
+# -- is written here, by the process that knows.
 set -eEuo pipefail
 
-phase=${1:?usage: run-phase <phase-function>}
+phase=${1:?usage: run-phase <phase-function> [display-name]}
+phase_name=${2:-$1}
 
 # shellcheck disable=SC1091
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/main.sh"
@@ -17,12 +25,19 @@ declare -F "$phase" >/dev/null ||
 
 ctx_from_env
 
+# The journal keeps the raw stream; the install log (the support artifact
+# the dashboard tails and `log` fetches) gets a CSI-stripped copy, the same
+# treatment the tty entry point gives the orchestrator's own output. Best
+# effort: an unwritable log (a test harness, a hand-run phase) must not
+# cost the phase its output or its run.
+if [[ -n ${CTX_LOG_PATH:-} ]] && touch "$CTX_LOG_PATH" 2>/dev/null; then
+  exec > >(tee >(sed -u 's/\x1b\[[0-9;?]*[A-Za-z]//g' >>"$CTX_LOG_PATH") 2>/dev/null) 2>&1
+fi
+
 # The library's view of the configuration, so any phase function is hostable
 # here — the later phases read CFG_* and the PART_* planning the config parse
-# produces. Reloading per process is the established pattern, not a new one:
-# the orchestrator itself calls arch_load_config once at pre-flight and again
-# at the install phase, because config_load is deterministic from the JSON
-# ctx_from_env resolved. installer_init only seeds this process's INST_ state.
+# produces. Reloading per process is the established pattern: config_load is
+# deterministic from the JSON ctx_from_env resolved.
 arch_init_library
 arch_load_config
 
@@ -54,29 +69,39 @@ persist_library_state() {
 # hosting a pre-format phase declares Environment=RUN_PHASE_NO_TARGET=1 to
 # opt out. A loud failure, deliberately not a systemd Condition: conditions
 # cannot read the env-provided target path, and a false condition skips
-# with success — the orchestrator would count the phase as done.
+# with success — the graph would count the phase as done.
 if [[ ${RUN_PHASE_NO_TARGET:-} != 1 ]] && ! mountpoint -q "$CTX_TARGET"; then
   fail "run-phase: $CTX_TARGET is not a mounted install target; refusing to run $phase before the disk phase"
 fi
 
 # The phase's stage mounts (image-top, factory-top) are systemd mounts with
 # PartOf=omarchy-install.target: a mid-phase death is followed by the
-# orchestrator stopping the target, and the group teardown unmounts them —
-# no per-process mount bookkeeping here. What this trap still owns is the
-# error handover, on a failing exit only.
+# orchestrator stopping the target, and the group teardown unmounts them.
+# This trap owns the failure record and the error handover.
+phase_started_at=$(now)
 run_phase_cleanup() {
   local status=$?
   ((status != 0)) || return 0
+  # A signal (SIGTERM from the group abort, typically) is the install being
+  # torn down around this phase, not the phase failing: the orchestrator
+  # writes that story, and a 'failed' entry here would tell it twice.
+  ((status < 128)) || return 0
   # The phase's own words, for the orchestrator's failure message: fail()
   # recorded them in this process, and the journal buries them under
-  # sha256sum output and systemd's exit lines — hand them over directly.
+  # command output and systemd's exit lines — hand them over directly.
   [[ -z ${ORCH_LAST_ERROR:-} ]] ||
     printf '%s' "$ORCH_LAST_ERROR" >"$CTX_STATE_DIR/phase-error" 2>/dev/null
+  phases_leave "$phase_name" failed "$phase_started_at" \
+    "${ORCH_LAST_ERROR:-phase exited with status $status}" 2>/dev/null || true
 }
 trap run_phase_cleanup EXIT
 
+info "› $phase_name"
+phases_enter "$phase_name"
+
 "$phase"
 
-# Reached only on success (set -e): hand this phase's library state to the
-# next phase's process.
+# Reached only on success (set -e): record the phase and hand this process's
+# library state to the next phase's.
+phases_leave "$phase_name" ok "$phase_started_at"
 persist_library_state

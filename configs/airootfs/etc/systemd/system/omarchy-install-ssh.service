@@ -4,12 +4,13 @@ Description=Stage SSH authorized keys on the install target
 # phase function when its input was not provided.
 PartOf=omarchy-install.target
 After=omarchy-install-login.service
+Requires=omarchy-install-login.service
 
 [Service]
 Type=oneshot
 EnvironmentFile=/usr/share/omarchy-iso/orchestrator/context.env
 EnvironmentFile=-/run/omarchy-install/context.env
 EnvironmentFile=-/run/omarchy-install/install.env
-ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase configure_ssh_access
+ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase configure_ssh_access "Configuring SSH access"
 # Seconds of file writes; two minutes is a stuck guard.
 TimeoutStartSec=120

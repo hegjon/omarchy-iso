@@ -5,12 +5,13 @@ Description=Finalize the user on the install target
 # function itself — user creation belongs to first boot there.
 PartOf=omarchy-install.target
 After=omarchy-install-limine.service
+Requires=omarchy-install-limine.service
 
 [Service]
 Type=oneshot
 EnvironmentFile=/usr/share/omarchy-iso/orchestrator/context.env
 EnvironmentFile=-/run/omarchy-install/context.env
 EnvironmentFile=-/run/omarchy-install/install.env
-ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase run_chroot_finalizer
+ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase run_chroot_finalizer "Finalizing user"
 # 13 s on a Core2; fifteen minutes is a stuck-chroot guard, not a budget.
 TimeoutStartSec=900

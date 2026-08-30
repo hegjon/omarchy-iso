@@ -4,12 +4,13 @@ Description=Seed the login manager on the install target
 # phase function when its input was not provided.
 PartOf=omarchy-install.target
 After=omarchy-install-user.service
+Requires=omarchy-install-user.service
 
 [Service]
 Type=oneshot
 EnvironmentFile=/usr/share/omarchy-iso/orchestrator/context.env
 EnvironmentFile=-/run/omarchy-install/context.env
 EnvironmentFile=-/run/omarchy-install/install.env
-ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase configure_login
+ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase configure_login "Configuring login"
 # Seconds of file writes; two minutes is a stuck guard.
 TimeoutStartSec=120
