@@ -16,8 +16,6 @@ Type=oneshot
 # sd_notify STATUS= progress.
 RemainAfterExit=yes
 NotifyAccess=all
-# The unit's own name, keying the per-phase error handover file.
-Environment=RUN_PHASE_UNIT=%n
 # The install context: path defaults, this run's resolved values, and the
 # raw inputs ctx_from_env rebuilds the rest from (later files win).
 EnvironmentFile=/usr/share/omarchy-iso/orchestrator/context.env

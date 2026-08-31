@@ -639,7 +639,7 @@ wait_for_unattended_install() {
     if grep -qi "installation stopped" <<<"$text"; then
       capture_console "failure-$prefix-stopped"
       ssh_live_root "cat /var/log/omarchy-install.log" >"$RUN_DIR/omarchy-install.log" 2>/dev/null || true
-      ssh_live_root "systemctl list-units --all --no-legend 'omarchy-install-*'; echo; cat /run/omarchy-install/phase-error.* 2>/dev/null" >"$RUN_DIR/phase-state" 2>/dev/null || true
+      ssh_live_root "systemctl list-units --all --no-legend 'omarchy-install-*'; echo; journalctl -b -t omarchy-phase-error -o cat --no-pager 2>/dev/null" >"$RUN_DIR/phase-state" 2>/dev/null || true
       echo "Install failed — artifacts saved to $RUN_DIR" >&2
       return 1
     fi

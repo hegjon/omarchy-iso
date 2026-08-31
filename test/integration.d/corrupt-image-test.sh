@@ -20,7 +20,9 @@ CORRUPT_ISO="$BASE_DIR/corrupt.iso"
 STREAM=arch/x86_64/omarchy-root.btrfs.zst
 VERIFY_UNIT=omarchy-root-image-verify.service
 GATE_UNIT=omarchy-install-prepare-target.service
-PHASE_ERROR=/run/omarchy-install/phase-error.omarchy-install-prepare-target.service
+# The failing phase's own words live in the journal, attributed to its
+# unit by cgroup and boot-scoped -- there is no handover file.
+PHASE_ERROR_QUERY='journalctl -b -u omarchy-install-prepare-target.service -t omarchy-phase-error -o cat --no-pager'
 
 # ------------------------------------------------------------------ fixture
 
@@ -89,7 +91,7 @@ install_from_corrupt_medium() {
   sleep 2
   capture_console "success-installer-stopped"
   ssh_live_root "cat /var/log/omarchy-install.log" >"$RUN_DIR/omarchy-install.log" 2>/dev/null || true
-  ssh_live_root "systemctl list-units --all --no-legend 'omarchy-install-*'; echo; cat /run/omarchy-install/phase-error.* 2>/dev/null" >"$RUN_DIR/phase-state" 2>/dev/null || true
+  ssh_live_root "systemctl list-units --all --no-legend 'omarchy-install-*'; echo; journalctl -b -t omarchy-phase-error -o cat --no-pager 2>/dev/null" >"$RUN_DIR/phase-state" 2>/dev/null || true
   ssh_live_root "journalctl -b -u $VERIFY_UNIT -o short-precise --no-pager" >"$RUN_DIR/verify-unit.journal" 2>/dev/null || true
 }
 
@@ -103,9 +105,9 @@ assert_refused() {
   check "install halted in the pre-flight phase" \
     ssh_live_root "[ \"\$(systemctl list-units --failed --plain --no-legend 'omarchy-install-*' | awk '{print \$1}')\" = $GATE_UNIT ]"
   check "the error tells the user to re-flash the medium" \
-    ssh_live_root "grep -q 'install medium is corrupt: re-flash it' $PHASE_ERROR"
+    ssh_live_root "$PHASE_ERROR_QUERY | grep -q 'install medium is corrupt: re-flash it'"
   check "the error carries sha256sum's verdict" \
-    ssh_live_root "grep -q 'did NOT match' $PHASE_ERROR"
+    ssh_live_root "$PHASE_ERROR_QUERY | grep -q 'did NOT match'"
   check "nothing ran after the pre-flight phase" \
     ssh_live_root "journalctl -b -u omarchy-install-prepare-live.service --no-pager | grep -q Finished && [ \"\$(systemctl show -p ExecMainStartTimestampMonotonic --value omarchy-install-disk.service)\" = 0 ]"
   check "target disk has no partition table" \

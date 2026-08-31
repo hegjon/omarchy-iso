@@ -1073,7 +1073,7 @@ if (( status != 0 )); then
   # through the state dir; a death outside any phase leaves neither, and
   # the log tail on the failure screen carries that story.
   read_phase_state || true
-  phase_error="$(cat "$INSTALL_STATE_DIR/phase-error.$PHASE_FAILED_UNIT" 2>/dev/null || true)"
+  phase_error="$(journalctl -b -u "$PHASE_FAILED_UNIT" -t omarchy-phase-error -o cat --no-pager 2>/dev/null || true)"
   last_phase="${PHASE_FAILED_NAME:-$PHASE_CUR_NAME}"
   [[ -n $last_phase ]] && failure_summary="last installer phase: $last_phase"
   if [[ -n $PHASE_FAILED_NAME ]]; then

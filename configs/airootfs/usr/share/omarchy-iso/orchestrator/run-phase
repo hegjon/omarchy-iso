@@ -18,6 +18,11 @@ set -eEuo pipefail
 phase=${1:?usage: run-phase <phase-function> [display-name]}
 phase_name=${2:-$1}
 
+# Which unit hosts this process, from the kernel's own record — no unit-file
+# plumbing. Empty for a hand-run phase outside the graph, and consumers
+# (the target-setup header guard) treat that as being the anchor.
+RUN_PHASE_UNIT=$(awk -F/ '$NF ~ /^omarchy-install-.*\.service$/ { print $NF; exit }' /proc/self/cgroup 2>/dev/null) || RUN_PHASE_UNIT=""
+
 # shellcheck disable=SC1091
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/main.sh"
 
@@ -102,13 +107,14 @@ run_phase_cleanup() {
   # writes that story.
   ((status < 128)) || return 0
   # The phase's own words, for the orchestrator's failure message: fail()
-  # recorded them in this process, and the journal buries them under
-  # command output and systemd's exit lines — hand them over directly.
-  # Keyed by unit name (Environment=RUN_PHASE_UNIT=%n) so concurrent
-  # phases in a fanned graph cannot clobber each other's story; a
-  # hand-run phase outside a unit falls back to its function name.
+  # recorded them in this process, and the plain journal stream buries
+  # them under command output and systemd's exit lines. A separate entry
+  # under its own identifier is precisely extractable (journalctl -b -u
+  # <unit> -t omarchy-phase-error), journald attributes it to this unit by
+  # cgroup, and concurrent phases in a fanned graph cannot clobber each
+  # other's story.
   [[ -z ${ORCH_LAST_ERROR:-} ]] ||
-    printf '%s' "$ORCH_LAST_ERROR" >"$CTX_STATE_DIR/phase-error.${RUN_PHASE_UNIT:-$phase}" 2>/dev/null
+    printf '%s\n' "$ORCH_LAST_ERROR" | systemd-cat -t omarchy-phase-error -p err 2>/dev/null || true
 }
 trap run_phase_cleanup EXIT
 

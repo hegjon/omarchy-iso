@@ -261,20 +261,24 @@ screen="$work/screen"
 
 # The failed-phase state the dashboard reads from systemd: one phase unit in
 # a fixture roster, a stub systemctl reporting it failed, and the phase's
-# own words handed over through the state dir -- the same three pieces a
-# real failed install leaves behind.
+# own words as the journal entry the handover leaves -- the same three
+# pieces a real failed install leaves behind.
 units_dir="$work/units"
 state_dir="$work/state"
 mkdir -p "$units_dir" "$state_dir"
 printf '[Service]\nExecStart=/usr/share/omarchy-iso/orchestrator/run-phase arch_install_system "Installing Arch + Omarchy"\n' \
   >"$units_dir/omarchy-install-strap.service"
-printf 'Pacstrap failed. See /var/log/archinstall.log' >"$state_dir/phase-error.omarchy-install-strap.service"
 cat >"$stubs/systemctl" <<'EOF'
 #!/bin/bash
 [[ ${1:-} == show ]] || exit 0
 printf 'ActiveState=failed\nStatusText=\n'
 EOF
-chmod +x "$stubs/systemctl"
+cat >"$stubs/journalctl" <<'EOF'
+#!/bin/bash
+[[ $* == *"-t omarchy-phase-error"* ]] || exit 0
+printf 'Pacstrap failed. See /var/log/archinstall.log\n'
+EOF
+chmod +x "$stubs/systemctl" "$stubs/journalctl"
 
 # A ten-line logo, the height of the real one. Without it the dashboard falls
 # back to a single centred word and the screen can never be tall enough to
