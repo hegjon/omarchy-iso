@@ -23,13 +23,10 @@ declare -F "$phase" >/dev/null ||
 
 ctx_from_env
 
-# The journal keeps the raw stream; the install log gets a filtered copy
-# through the shared log-filter.sed (CSI strip + the banners that would
-# contradict a later failure). Best effort: an unwritable log (test
-# harness, hand-run) must not cost the phase its run.
-if [[ -n ${CTX_LOG_PATH:-} ]] && touch "$CTX_LOG_PATH" 2>/dev/null; then
-  exec > >(tee >(sed -u -f "$ORCHESTRATOR_DIR/log-filter.sed" >>"$CTX_LOG_PATH") 2>/dev/null) 2>&1
-fi
+# Phase output belongs to the journal alone (the unit's stdout, with
+# timestamps the flat log never had); the dashboard writes the phase
+# markers into the session log itself, and phases_finalize exports the
+# full journal onto the installed system.
 
 # Reload the library's config view per process: deterministic from the
 # JSON ctx_from_env resolved, so any phase function is hostable here.

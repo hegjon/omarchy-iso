@@ -77,6 +77,8 @@ UNIT_STATUS_FOR=omarchy-install-disk.service UNIT_STATUS_TEXT="progress=0.4231"
 NOW=130
 install_progress
 check "the linear mid-install position matches the old band walk" 66 "$PROGRESS_PM"
+check "the dashboard authors the session log's phase marker" \
+  "1" "$(grep -c '› Preparing disk layout' "$BOX/log" 2>/dev/null)"
 
 # ── monotone through a completion: partial credit becomes full weight ───────
 NOW=160

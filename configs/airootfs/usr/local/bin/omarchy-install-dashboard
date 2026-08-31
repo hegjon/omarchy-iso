@@ -501,6 +501,10 @@ install_progress() {
       activating)
         if [[ -z ${PHASE_T0S[$i]:-} ]]; then
           PHASE_T0S[$i]=$NOW
+          # This process is the session log's phase-marker author now:
+          # the phases themselves log to the journal alone, and the
+          # support file keeps its human-readable spine.
+          dashboard_log "› ${PHASE_DISPLAY[i]}"
           # The package counters belong to the one package phase; baseline
           # them the frame it first runs.
           if (( PHASE_PKG[i] )); then

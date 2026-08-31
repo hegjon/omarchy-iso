@@ -70,6 +70,17 @@ phases_finalize() {
      phases: [split("\n")[] | select(length > 0) | split("\t")
               | {name: .[1], status: .[2], elapsed: (.[3] | tonumber)}]}' \
     >"$timing"
+
+  # The phases' own output lives in the journal, timestamped -- something
+  # the flat log never had. Export it onto the installed system beside the
+  # session log the target already carries. Two queries: -u and -t do not
+  # compose in one (measured on the phase-error handover).
+  {
+    printf '\n=== install journal (per-phase output, exported at finalize) ===\n'
+    journalctl -b -u 'omarchy-install-*' -o short-iso --no-pager 2>/dev/null |
+      sed -f "${ORCHESTRATOR_DIR:-/usr/share/omarchy-iso/orchestrator}/log-filter.sed"
+    journalctl -b -t omarchy-phase-error -t omarchy-install-milestone -o short-iso --no-pager 2>/dev/null
+  } >>"$CTX_TARGET/var/log/omarchy-install.log" || true
 }
 
 # _installed_package_count(): one directory per package under local/, which
