@@ -51,17 +51,36 @@ prepare_target_setup() {
   CTX_TARGET_SETUP_PREPARED=true
 }
 
+# The target-setup start time is systemd's record, not state passed between
+# phases: the system phase is the first target-setup phase in the graph, so
+# its unit's own start timestamp IS the moment target setup began, and every
+# later phase -- concurrent ones included, once the graph fans out -- reads
+# the same value from the same place. A phase run outside the graph falls
+# back to its own clock.
+OMARCHY_SETUP_ANCHOR_UNIT=omarchy-install-system.service
+
 ensure_finalizer_log_started() {
   if [[ -z $CTX_OMARCHY_START_TIME ]]; then
-    CTX_OMARCHY_START_EPOCH=$(date +%s)
-    CTX_OMARCHY_START_TIME=$(date '+%Y-%m-%d %H:%M:%S')
+    local ts
+    ts=$(systemctl show "$OMARCHY_SETUP_ANCHOR_UNIT" -p ExecMainStartTimestamp --value 2>/dev/null) || ts=''
+    [[ $ts == n/a ]] && ts=''
+    if [[ -n $ts ]] && CTX_OMARCHY_START_EPOCH=$(date -d "$ts" +%s 2>/dev/null); then
+      CTX_OMARCHY_START_TIME=$(date -d "$ts" '+%Y-%m-%d %H:%M:%S')
+    else
+      CTX_OMARCHY_START_EPOCH=$(date +%s)
+      CTX_OMARCHY_START_TIME=$(date '+%Y-%m-%d %H:%M:%S')
+    fi
   fi
 
   mkdir -p "${CTX_LOG_PATH%/*}"
   touch "$CTX_LOG_PATH"
   chmod 0666 "$CTX_LOG_PATH"
 
-  if [[ $CTX_FINALIZER_HEADER_WRITTEN != true ]]; then
+  # The header belongs to the anchor phase alone (a phase outside any unit
+  # counts as its own anchor); the variable only guards repeat calls within
+  # that one process, so nothing here needs to survive a process boundary.
+  if [[ $CTX_FINALIZER_HEADER_WRITTEN != true &&
+        ${RUN_PHASE_UNIT:-$OMARCHY_SETUP_ANCHOR_UNIT} == "$OMARCHY_SETUP_ANCHOR_UNIT" ]]; then
     printf '=== Omarchy Target Setup Started: %s ===\n' "$CTX_OMARCHY_START_TIME" >>"$CTX_LOG_PATH"
     CTX_FINALIZER_HEADER_WRITTEN=true
   fi

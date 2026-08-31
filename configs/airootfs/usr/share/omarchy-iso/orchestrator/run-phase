@@ -52,18 +52,14 @@ arch_load_config
 # the UUIDs mkfs assigned) feed the strap's Limine setup and kernel
 # params, and the strap's INST_HELPER_FLAGS ledger feeds
 # installer_finish's audit in the base phase. (INST_ZRAM_ENABLED is set
-# and read within the strap's own process and does not belong here.) The
-# orchestrator's own cross-phase state travels the same way: the
-# target-setup memoization and the finalizer log's header/start-time,
-# which the system and user phases must share -- per-process, the header
-# was written twice and the two chroots saw different start times. Every
-# phase restores the state and persists it back only when its run changed
-# something, so the handoff needs no per-phase code and relay phases
-# write nothing.
+# and read within the strap's own process and does not belong here; the
+# target-setup start time is the anchor unit's systemd timestamp and the
+# prepare memo is idempotent per process, so no CTX_ value travels.)
+# Every phase restores the state and persists it back only when its run
+# changed something, so the handoff needs no per-phase code and relay
+# phases write nothing.
 LIBRARY_STATE_VARS=(PART_DEVPATH PART_PARTN PART_PARTUUID PART_UUID
-                    INST_HELPER_FLAGS
-                    CTX_TARGET_SETUP_PREPARED CTX_OMARCHY_START_TIME
-                    CTX_OMARCHY_START_EPOCH CTX_FINALIZER_HEADER_WRITTEN)
+                    INST_HELPER_FLAGS)
 
 library_state_snapshot() {
   local v

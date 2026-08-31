@@ -146,6 +146,37 @@ graph_failure_prefers_handover() {
 }
 check "the graph failure headline prefers the handed-over message to the journal" graph_failure_prefers_handover
 
+# The target-setup clock is the anchor unit's systemd timestamp: the system
+# and user phases run in different processes (concurrently, once the graph
+# fans out) and must agree on the start time without passing state, and the
+# log header belongs to the anchor phase alone, written once.
+finalizer_clock_from_the_anchor_unit() {
+  local d expect rc=0
+  d=$(mktemp -d) || return 1
+  expect=$(date -d "Sun 2026-08-31 07:41:02 UTC" +%s)
+  run_finalizer_probe() { # unit-name label
+    bash -c '
+      systemctl() { echo "Sun 2026-08-31 07:41:02 UTC"; }
+      CTX_LOG_PATH="'"$d"'/log"
+      CTX_OMARCHY_START_TIME= CTX_OMARCHY_START_EPOCH= CTX_FINALIZER_HEADER_WRITTEN=false
+      '"$(sed -n '/^OMARCHY_SETUP_ANCHOR_UNIT=/,/^}/p' "$ORCH/target_setup.sh")"'
+      RUN_PHASE_UNIT='"$1"'
+      ensure_finalizer_log_started
+      ensure_finalizer_log_started
+      echo "'"$2"'=$CTX_OMARCHY_START_EPOCH" >>"'"$d"'/out"
+    '
+  }
+  run_finalizer_probe omarchy-install-system.service anchor_epoch
+  run_finalizer_probe omarchy-install-user.service user_epoch
+  grep -q "anchor_epoch=$expect" "$d/out" || rc=1
+  grep -q "user_epoch=$expect" "$d/out" || rc=1
+  [[ $(grep -c 'Omarchy Target Setup Started' "$d/log") == 1 ]] || rc=1
+  rm -rf "$d"
+  return "$rc"
+}
+check "system and user phases agree on the anchor unit's start time; one header" \
+  finalizer_clock_from_the_anchor_unit
+
 # Every chroot must run in a private mount namespace (concurrent chroots on
 # one target unmount each other's API filesystems), and the escape hatch
 # must reach the real binary. Driven with a recording unshare and a PATH
