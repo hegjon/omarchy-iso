@@ -339,14 +339,17 @@ cmd_write() {
       # login shell), so nothing bash-only here: the timestamps arrived as
       # plain assignments from the controller, and printf is a builtin in
       # both shells, so the message itself faults nothing in.
+      # \r\n, not \n: the install UI leaves the console in raw mode (ONLCR
+      # off), where a bare newline staircases instead of returning to
+      # column 0. Explicit CR renders right in either termios state.
       {
-        printf "\033[2J\033[H\n\n"
-        printf "   The installation session on this machine has been stopped.\n\n"
-        printf "   A remote rewrite of the USB install medium started at %s.\n" "$write_started"
-        printf "   This screen stays frozen on purpose while the stick is written.\n\n"
-        printf "   DO NOT power off: the machine reboots itself into the new\n"
-        printf "   image when the write completes -- expect it back around %s.\n" "$write_back_by"
-        printf "   If it is still sitting here well past that, the write is stuck.\n"
+        printf "\033[2J\033[H\r\n\r\n"
+        printf "   The installation session on this machine has been stopped.\r\n\r\n"
+        printf "   A remote rewrite of the USB install medium started at %s.\r\n" "$write_started"
+        printf "   This screen stays frozen on purpose while the stick is written.\r\n\r\n"
+        printf "   DO NOT power off: the machine reboots itself into the new\r\n"
+        printf "   image when the write completes -- expect it back around %s.\r\n" "$write_back_by"
+        printf "   If it is still sitting here well past that, the write is stuck.\r\n"
       } >/dev/tty1 2>/dev/null || true
       echo "session prepared: readers stopped, toolchain pinned, console told"
     ' || { echo "write: could not prepare the live session" >&2; exit 1; }
