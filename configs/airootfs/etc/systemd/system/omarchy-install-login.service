@@ -2,9 +2,11 @@
 Description=Seed the login manager on the install target
 # One of the small config phases, hosted by run-phase; skips inside the
 # phase function when its input was not provided.
+# The join of the limine∥user fan: both must have latched before the tail
+# chain continues.
 PartOf=omarchy-install.target
-After=omarchy-install-user.service
-Requires=omarchy-install-user.service
+After=omarchy-install-limine.service omarchy-install-user.service
+Requires=omarchy-install-limine.service omarchy-install-user.service
 
 [Service]
 Type=oneshot

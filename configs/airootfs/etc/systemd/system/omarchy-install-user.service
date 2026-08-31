@@ -3,9 +3,12 @@ Description=Finalize the user on the install target
 # omarchy-provision-user in the target's chroot as the
 # install's user. Deferred-provisioning installs skip inside the phase
 # function itself — user creation belongs to first boot there.
+# Deliberately a sibling of the Limine phase, not its successor: the two
+# longest tail phases run concurrently (each chroot in its own mount
+# namespace), and the login phase joins on both.
 PartOf=omarchy-install.target
-After=omarchy-install-limine.service
-Requires=omarchy-install-limine.service
+After=omarchy-install-provisioning.service
+Requires=omarchy-install-provisioning.service
 
 [Service]
 Type=oneshot
