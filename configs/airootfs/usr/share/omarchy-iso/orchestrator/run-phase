@@ -109,12 +109,15 @@ run_phase_cleanup() {
   # The phase's own words, for the orchestrator's failure message: fail()
   # recorded them in this process, and the plain journal stream buries
   # them under command output and systemd's exit lines. A separate entry
-  # under its own identifier is precisely extractable (journalctl -b -u
-  # <unit> -t omarchy-phase-error), journald attributes it to this unit by
-  # cgroup, and concurrent phases in a fanned graph cannot clobber each
-  # other's story.
+  # under its own identifier is precisely extractable. The unit name rides
+  # IN each line, not in journald's attribution: the unit's cgroup is torn
+  # down milliseconds after this trap, and cgroup-based _SYSTEMD_UNIT
+  # attribution loses that race (measured: the entries arrived with the
+  # identifier but no unit field). The prefix also keys concurrent
+  # failures apart once the graph fans out.
   [[ -z ${ORCH_LAST_ERROR:-} ]] ||
-    printf '%s\n' "$ORCH_LAST_ERROR" | systemd-cat -t omarchy-phase-error -p err 2>/dev/null || true
+    printf '%s\n' "$ORCH_LAST_ERROR" | sed "s/^/${RUN_PHASE_UNIT:-$phase}: /" |
+      systemd-cat -t omarchy-phase-error -p err 2>/dev/null || true
 }
 trap run_phase_cleanup EXIT
 

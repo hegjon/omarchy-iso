@@ -100,9 +100,10 @@ cleanup_trap_mechanics() {
 }
 check "run-phase hands nothing over on a clean exit" cleanup_trap_mechanics
 
-# And hands the phase's own fail() message to the orchestrator through the
-# state dir — the journal buries it under command output and systemd's exit
-# lines, which is exactly how the re-flash advice got lost once.
+# And hands the phase's own fail() message to the journal under its own
+# identifier — the plain unit stream buries it under command output and
+# systemd's exit lines, which is exactly how the re-flash advice got lost
+# once.
 error_handover() {
   local d got
   d=$(mktemp -d) || return 1
@@ -111,12 +112,13 @@ error_handover() {
     systemd-cat() { printf "systemd-cat %s <- " "$*" >>"'"$d"'/handover"; cat >>"'"$d"'/handover"; }
     source "'"$d"'/fn.sh"
     CTX_STATE_DIR="'"$d"'"
+    RUN_PHASE_UNIT=omarchy-install-doomed.service
     ORCH_LAST_ERROR="install medium is corrupt: re-flash it"
     (exit 1); run_phase_cleanup
   '
   got=$(cat "$d/handover" 2>/dev/null)
   rm -rf "$d"
-  [[ $got == "systemd-cat -t omarchy-phase-error -p err <- install medium is corrupt: re-flash it" ]]
+  [[ $got == "systemd-cat -t omarchy-phase-error -p err <- omarchy-install-doomed.service: install medium is corrupt: re-flash it" ]]
 }
 check "run-phase hands the phase's fail message over on a failing exit" error_handover
 
@@ -125,14 +127,14 @@ graph_failure_prefers_handover() {
   d=$(mktemp -d) || return 1
   # set -eE plus an ERR trap is main()'s regime: a missing handover file
   # once turned the detail collector itself into the reported failure.
-  # The handover is a journal entry under its own identifier; the stub
-  # answers the -t query the way journald would, and the fallback case
-  # has no such entry, only the buried noise of the plain unit stream.
+  # The handover is a journal entry under its own identifier, each line
+  # prefixed with the failing unit's name; the fallback case has no such
+  # entry, only the buried noise of the plain unit stream.
   out=$(bash -c '
     set -eEuo pipefail; trap "echo ERR-TRAP-FIRED; exit 1" ERR
     journalctl() {
       [[ $* == *"-t omarchy-phase-error"* ]] &&
-        { echo "install medium is too slow: try another USB stick"; return 0; }
+        { echo "some.unit: install medium is too slow: try another USB stick"; return 0; }
       echo "systemd noise only"
     }
     '"$(sed -n '/^phase_graph_failure_detail() {/,/^}/p' "$ORCH/main.sh")"'

@@ -20,9 +20,10 @@ CORRUPT_ISO="$BASE_DIR/corrupt.iso"
 STREAM=arch/x86_64/omarchy-root.btrfs.zst
 VERIFY_UNIT=omarchy-root-image-verify.service
 GATE_UNIT=omarchy-install-prepare-target.service
-# The failing phase's own words live in the journal, attributed to its
-# unit by cgroup and boot-scoped -- there is no handover file.
-PHASE_ERROR_QUERY='journalctl -b -u omarchy-install-prepare-target.service -t omarchy-phase-error -o cat --no-pager'
+# The failing phase's own words live in the journal under the handover
+# identifier, each line prefixed with the failing unit's name (cgroup
+# attribution loses the teardown race) -- there is no handover file.
+PHASE_ERROR_QUERY='journalctl -b -t omarchy-phase-error -o cat --no-pager | grep ^omarchy-install-prepare-target.service:'
 
 # ------------------------------------------------------------------ fixture
 

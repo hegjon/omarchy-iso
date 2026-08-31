@@ -53,12 +53,16 @@ unset _module
 PHASE_GRAPH_TERMINAL=omarchy-install-factory-snapshot.service
 
 # The failed phase's own words, for the failure headline: fail() in the
-# phase's process handed them over via the state dir, and the journal
-# (where they sit buried under command output and systemd's exit lines) is
-# the fallback.
+# phase's process handed them to the journal under their own identifier;
+# the plain unit stream (where they sit buried under command output and
+# systemd's exit lines) is the fallback.
 phase_graph_failure_detail() {
   local failed_unit=$1 detail
-  detail=$(journalctl -b -u "$failed_unit" -t omarchy-phase-error -o cat --no-pager 2>/dev/null) || true
+  # The unit key is a line prefix, not a journald field: the writer's
+  # cgroup is gone before attribution resolves (see run-phase), so the
+  # identifier finds the entries and the prefix picks this unit's out.
+  detail=$(journalctl -b -t omarchy-phase-error -o cat --no-pager 2>/dev/null |
+    sed -n "s/^$failed_unit: //p") || true
   [[ -n $detail ]] ||
     detail=$(journalctl --no-pager -o cat -b -u "$failed_unit" 2>/dev/null | tail -n 5 | tr '\n' ' ')
   printf '%s' "$detail"
@@ -91,9 +95,7 @@ main() {
   # One blocking start of the terminal phase: its Requires=/After= chain
   # pulls every phase in order; the latched units themselves are the record
   # the dashboard polls. A failed phase fails its start job and the chain
-  # stops there -- collect the phase's own words (handed over via the state
-  # dir; the journal buries them under command output and systemd's exit
-  # lines).
+  # stops there -- collect the phase's own words from their journal entry.
   local failed_unit
   if ! systemctl start "$PHASE_GRAPH_TERMINAL"; then
     failed_unit=$(systemctl list-units --failed --plain --no-legend 'omarchy-install-*' 2>/dev/null |
