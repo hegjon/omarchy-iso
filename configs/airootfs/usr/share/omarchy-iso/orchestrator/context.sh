@@ -15,7 +15,6 @@ CTX_USERNAME='' CTX_MODE='' CTX_IS_PROTECTED=false
 # shellcheck source=configs/airootfs/usr/share/omarchy-iso/orchestrator/context.env
 source "${BASH_SOURCE[0]%/*}/context.env"
 # Mutable per-run state shared across phases (ctx.state in Python).
-CTX_TARGET_SETUP_PREPARED=false
 CTX_OMARCHY_START_TIME='' CTX_OMARCHY_START_EPOCH=''
 CTX_FINALIZER_HEADER_WRITTEN=false
 

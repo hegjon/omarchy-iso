@@ -33,22 +33,12 @@ debug_log() {
 }
 
 prepare_target_setup() {
-  [[ $CTX_TARGET_SETUP_PREPARED == true ]] && return 0
   require_target_is_mnt
-
+  # Idempotent per call, so no memo crosses processes. The live-tree binds
+  # (mirror, /opt/packages) are not started here: the phase units that
+  # chroot declare them as RequiresMountsFor=, so systemd holds the phase
+  # until they are up and PartOf= tears them down with the group.
   cp /etc/pacman.conf "$CTX_TARGET/etc/pacman.conf"
-
-  # Static mount units: starting an already-active mount is a no-op, so the
-  # phase units that share this helper cannot stack a second bind the way
-  # repeated mount --bind calls could, and PartOf= the install target
-  # unmounts them on any group teardown.
-  local unit
-  for unit in mnt-var-cache-omarchy-mirror-offline.mount mnt-opt-packages.mount; do
-    systemctl start "$unit" ||
-      fail "could not bind the live tree into the target: journalctl -u $unit"
-  done
-
-  CTX_TARGET_SETUP_PREPARED=true
 }
 
 # The target-setup start time is systemd's record, not state passed between
@@ -162,6 +152,19 @@ run_target_setup_command() {
   ((rc == 0)) || fail "$1 failed (exit $rc)"
 }
 
+# The system unit's ExecStartPre=/ExecStopPost= pair: the mask goes up
+# before the finalizer and systemd runs the unmask on every exit path --
+# failure, group abort, SIGKILL of the phase included -- which no bash
+# trap can promise. The limine phase's assert_boot_hooks_restored stays as
+# the belt over these braces before anything is handed over.
+mask_target_boot_hooks() {
+  mask_mkinitcpio_pacman_hooks "$CTX_TARGET" "${TARGET_DEFERRED_BOOT_HOOKS[@]}"
+}
+
+unmask_target_boot_hooks() {
+  unmask_mkinitcpio_pacman_hooks "$CTX_TARGET" "${TARGET_DEFERRED_BOOT_HOOKS[@]}"
+}
+
 run_system_finalizer() {
   local -a cmd
   if [[ $CTX_DEFER_PROVISIONING == true ]]; then
@@ -170,10 +173,7 @@ run_system_finalizer() {
     cmd=(/usr/bin/omarchy-apply-system --install-user "$CTX_USERNAME" --first-install)
   fi
 
-  # The exit trap restores the mask if the finalizer fails (cleanup_target_hook_masks).
-  mask_mkinitcpio_pacman_hooks "$CTX_TARGET" "${TARGET_DEFERRED_BOOT_HOOKS[@]}"
   run_target_setup_command "${cmd[@]}"
-  unmask_mkinitcpio_pacman_hooks "$CTX_TARGET" "${TARGET_DEFERRED_BOOT_HOOKS[@]}"
 }
 
 run_chroot_finalizer() {

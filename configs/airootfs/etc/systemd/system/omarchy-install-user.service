@@ -9,6 +9,11 @@ Description=Finalize the user on the install target
 PartOf=omarchy-install.target
 After=omarchy-install-provisioning.service
 Requires=omarchy-install-provisioning.service
+# The chroot needs the live tree bound into the target (bundled runtimes
+# under /opt/packages, the mirror for target pacman); a start on an
+# already-active mount is a no-op, so sharing these with the system unit
+# stacks nothing.
+RequiresMountsFor=/mnt/var/cache/omarchy/mirror/offline /mnt/opt/packages
 
 [Service]
 Type=oneshot

@@ -69,7 +69,9 @@ orchestrator_on_exit() {
   # failure it ends the unit before the target is torn down.
   stop_target_keyring_init
   cleanup_live_hook_masks
-  cleanup_target_hook_masks
+  # The target's hook masks are the system unit's own ExecStopPost= now;
+  # the stop above already ran it. (The limine phase still repairs and
+  # asserts via cleanup_target_hook_masks before handover.)
   [[ $ORCH_SUCCESS == true ]] || cleanup_protected_state
   exit "$status"
 }

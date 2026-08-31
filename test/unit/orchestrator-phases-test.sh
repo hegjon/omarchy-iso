@@ -89,7 +89,9 @@ reset_calls
 check 'exit 1' eq "$?" 1
 check 'halt message' contains "$(cat "$ERR")" 'Installation halted.'
 check 'group abort issued' contains "$(calls)" 'systemctl stop omarchy-install.target'
-check 'cleanups ran' contains "$(calls)" cleanup_target_hook_masks
+check 'cleanups ran' contains "$(calls)" cleanup_live_hook_masks
+check 'the target hook unmask is the system unit'\''s, not the trap'\''s' \
+  test -z "$(calls | grep cleanup_target_hook_masks || true)"
 
 section 'exit trap: an interrupt tells its own story'
 fresh_target
