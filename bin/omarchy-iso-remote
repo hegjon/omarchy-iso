@@ -312,6 +312,18 @@ cmd_write() {
     # local-time watch. The double-quoted prefix evaluates locally and
     # splices into the single-quoted remote script as plain assignments.
     rssh "$HOST" "write_started=$(date +%H:%M:%S) write_back_by=$(date -d '10 minutes' +%H:%M:%S); "'
+      # Freeze the install UI and orchestrator before their world is torn
+      # down: a stopped process observes nothing, so no misleading corrupt-
+      # medium headline lands in the log and no failure screen paints over
+      # the console notice. The session is sacrificial and ends in a
+      # reboot, so nothing is ever resumed.
+      # Bracketed patterns: this whole script rides in the remote shell 
+      # cmdline, and an unbracketed pattern would match -- and freeze --
+      # the shell running these very lines (measured: the prepare stopped
+      # itself at this exact spot).
+      pkill -STOP -f "omarchy-install-[d]ashboard" 2>/dev/null || true
+      pkill -STOP -f "orchestrator/[m]ain.sh" 2>/dev/null || true
+      pkill -STOP -f "omarchy-iso-[i]nstall " 2>/dev/null || true
       # Nothing may hold the medium or churn the page cache once the write
       # starts: an aborted install group and stopped boot readers give the
       # write the medium to itself, and every cached page stays cached.
