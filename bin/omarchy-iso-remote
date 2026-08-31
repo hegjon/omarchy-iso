@@ -307,7 +307,11 @@ cmd_write() {
     echo "write: $HOST runs its live system FROM $usb -- preparing the session"
     echo "(everything the write needs is pinned in RAM; the session is"
     echo "sacrificial after this: hands off its console, reboot when done)"
-    rssh "$HOST" '
+    # The console timestamps are rendered here, not on the box: the live
+    # ISO's clock runs UTC, and the person reading the screen holds a
+    # local-time watch. The double-quoted prefix evaluates locally and
+    # splices into the single-quoted remote script as plain assignments.
+    rssh "$HOST" "write_started=$(date +%H:%M:%S) write_back_by=$(date -d '10 minutes' +%H:%M:%S); "'
       # Nothing may hold the medium or churn the page cache once the write
       # starts: an aborted install group and stopped boot readers give the
       # write the medium to itself, and every cached page stays cached.
@@ -327,7 +331,24 @@ cmd_write() {
         ldd "$bin" 2>/dev/null | awk "\$3 ~ /^\// {print \$3}"
       done | sort -u | while read -r lib; do cat "$lib" >/dev/null 2>&1 || true; done
       cat /usr/lib/ld-linux-x86-64.so.2 >/dev/null 2>&1 || true
-      echo "session prepared: readers stopped, toolchain pinned"
+      # The person at the machine sees the console freeze the moment the
+      # squashfs dies; say why on the screen itself first. Builtins only:
+      # printf to the console faults nothing in after the write starts,
+      # and the drawn text survives because nothing repaints over it.
+      # The remote shell is zsh, not bash (sshd runs commands through the
+      # login shell), so nothing bash-only here: the timestamps arrived as
+      # plain assignments from the controller, and printf is a builtin in
+      # both shells, so the message itself faults nothing in.
+      {
+        printf "\033[2J\033[H\n\n"
+        printf "   The installation session on this machine has been stopped.\n\n"
+        printf "   A remote rewrite of the USB install medium started at %s.\n" "$write_started"
+        printf "   This screen stays frozen on purpose while the stick is written.\n\n"
+        printf "   DO NOT power off: the machine reboots itself into the new\n"
+        printf "   image when the write completes -- expect it back around %s.\n" "$write_back_by"
+        printf "   If it is still sitting here well past that, the write is stuck.\n"
+      } >/dev/tty1 2>/dev/null || true
+      echo "session prepared: readers stopped, toolchain pinned, console told"
     ' || { echo "write: could not prepare the live session" >&2; exit 1; }
   fi
 
