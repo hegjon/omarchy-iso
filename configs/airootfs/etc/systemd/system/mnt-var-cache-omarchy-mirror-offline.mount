@@ -9,6 +9,14 @@ Description=Offline package mirror on the install target's mirror path
 RequiresMountsFor=/var/cache/omarchy/mirror/offline
 # A group abort stops omarchy-install.target (the orchestrator's exit trap),
 # and PartOf= takes this mount down with it.
+# After= the disk phase, load-bearing: Requires= from a phase unit pulls
+# this mount's start job in at transaction dispatch, and unordered it binds
+# onto the live /mnt minutes before the disk phase mounts the target there
+# -- and the image phase then unmounts the whole target tree for the subvol
+# swap, taking the bind with it: the chroots see an empty
+# directory (measured: the user phase's bundled-Node lookup failed exactly
+# this way, twice). Only after the image phase is /mnt its final tree.
+After=omarchy-install-image.service
 PartOf=omarchy-install.target
 
 [Mount]
