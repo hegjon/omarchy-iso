@@ -633,20 +633,39 @@ render_dynamic() {
   printf '%s' "$CLEAR_TO_END"
 }
 
+format_duration() {
+  local secs=$1
+  if (( secs >= 3600 )); then
+    printf '%dh %dm %ds' "$(( secs / 3600 ))" "$(( secs % 3600 / 60 ))" "$(( secs % 60 ))"
+  else
+    printf '%dm %ds' "$(( secs / 60 ))" "$(( secs % 60 ))"
+  fi
+}
+
 install_duration() {
   local path line duration secs
 
-  # This process launched the installer and outlived it, so its own clock is
-  # the duration -- the frame clock was set right before the child spawned.
+  # The installer marks its own span in the journal with armored
+  # sentinels -- BEGIN the moment the configurator hands over, END after
+  # the timing record -- so the displayed time is the span the user
+  # pressed start on, not this process's lifetime with its release and
+  # teardown.
+  secs=$(journalctl -b -t omarchy-install-milestone -o short-unix --no-pager 2>/dev/null |
+    awk '/-----BEGIN OMARCHY INSTALL-----$/ && s == "" { s = $1 }
+         /-----END OMARCHY INSTALL-----$/ { f = $1 }
+         END { if (s != "" && f != "" && f > s) printf "%d", f - s }')
+  if [[ $secs =~ ^[0-9]+$ ]] && (( secs > 0 )); then
+    format_duration "$secs"
+    return 0
+  fi
+
+  # No milestones (a preview, a test rig): this process launched the
+  # installer and outlived it, so its own clock is the next best answer.
   if (( DASH_T0 > 0 )); then
     set_now
     secs=$(( NOW - DASH_T0 ))
     if (( secs > 0 )); then
-      if (( secs >= 3600 )); then
-        printf '%dh %dm %ds' "$(( secs / 3600 ))" "$(( secs % 3600 / 60 ))" "$(( secs % 60 ))"
-      else
-        printf '%dm %ds' "$(( secs / 60 ))" "$(( secs % 60 ))"
-      fi
+      format_duration "$secs"
       return 0
     fi
   fi

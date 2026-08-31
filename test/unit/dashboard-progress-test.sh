@@ -133,6 +133,17 @@ UNIT_MODE[omarchy-install-factory-snapshot.service]=active
 install_progress
 check "the terminal latch completes the bar" 1000 "$PROGRESS_PM"
 
+# ── the installed-in line reads the installer's own journal milestones ──────
+journalctl() {
+  [[ $* == *"-t omarchy-install-milestone"* ]] || return 0
+  printf '1756640000.100000 host omarchy-install-milestone[10]: -----BEGIN OMARCHY INSTALL-----\n'
+  printf '1756640062.400000 host omarchy-install-milestone[99]: -----END OMARCHY INSTALL-----\n'
+}
+check "the displayed duration is the start-to-finished journal span" "1m 2s" "$(install_duration)"
+journalctl() { :; }
+DASH_T0=0
+check "no milestones and no clock falls back to the log parse (empty here)" "" "$(install_duration)"
+
 if (( fails )); then
   echo "dashboard progress model: FAILED"
   exit 1

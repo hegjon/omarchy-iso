@@ -74,6 +74,11 @@ main() {
   local who=$CTX_USERNAME
   [[ -n $who ]] || who='deferred provisioning (user created at first boot)'
   info "Installing Omarchy for $who → $CTX_TARGET"
+  # The span the user experiences, marked in the journal: this process
+  # starts the moment the configurator hands over, and the finish marker
+  # lands after the timing record. The dashboard reads the pair back by
+  # identifier (epoch stamps via -o short-unix) for its installed-in line.
+  printf '%s\n' '-----BEGIN OMARCHY INSTALL-----' | systemd-cat -t omarchy-install-milestone 2>/dev/null || true
 
   # The umbrella for the systemd-run phases: parts declare PartOf= it, so
   # stopping it is the group abort that takes any running phase's cgroup.
@@ -106,6 +111,7 @@ main() {
   phases_finalize
 
   ORCH_SUCCESS=true
+  printf '%s\n' '-----END OMARCHY INSTALL-----' | systemd-cat -t omarchy-install-milestone 2>/dev/null || true
   info 'Installation complete.'
 }
 
