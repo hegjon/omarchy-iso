@@ -88,35 +88,65 @@ check 'live hooks unmasked after the last pacstrap' test "$(calls | grep -n 'app
 check 'keyring init started after the last pacstrap' test "$(calls | grep -n 'applications_install\|start_target_keyring_init' | cut -d: -f1 | tr '\n' ' ')" == '11 13 '
 
 section 'phase wiring'
-# Walks the real unit graph: from the terminal unit, follow each Requires=
-# on another phase unit back to the root. The chain must be one linear path
-# that covers every run-phase unit exactly once, and the canonical
-# disk -> image -> strap -> base order must sit inside it.
+# The unit graph as a DAG, the way the dashboard's roster reads it: every
+# Requires= edge between phase units, Kahn-sorted with a sorted-name scan.
+# Demands no cycle, and that the terminal's Requires= closure reaches every
+# phase unit -- an orphan off the closure would never start. The canonical
+# disk -> image -> strap -> base order is asserted as precedence, not
+# adjacency, so a future fan-out changes edges without rewriting the check.
 walk_phase_graph() {
-  local units_dir="$ROOT/configs/airootfs/etc/systemd/system" chain=() unit=omarchy-install-factory-snapshot.service
-  local -A seen=()
-  local prev
-  while [[ -n $unit ]]; do
-    [[ -z ${seen[$unit]:-} ]] || { echo "cycle at $unit"; return 1; }
-    seen[$unit]=1
-    chain=("$unit" "${chain[@]}")
-    prev=$(grep -oE '^Requires=omarchy-install-[a-z-]+\.service' "$units_dir/$unit" 2>/dev/null | cut -d= -f2)
-    unit=$prev
+  local units_dir="$ROOT/configs/airootfs/etc/systemd/system" f unit dep ready progressed remaining
+  local terminal=omarchy-install-factory-snapshot.service
+  local -a all=() order=() frontier=()
+  local -A requires=() emitted=() is_phase=() reached=()
+  for f in "$units_dir"/omarchy-install-*.service; do
+    grep -qE '^ExecStart=.*run-phase ' "$f" 2>/dev/null || continue
+    unit=${f##*/}
+    is_phase[$unit]=1
+    all+=("$unit")
+    requires[$unit]=$(grep -E '^Requires=' "$f" 2>/dev/null |
+      grep -oE 'omarchy-install-[a-z-]+\.service' | tr '\n' ' ') || requires[$unit]=""
   done
-  local expected total
-  expected=$(grep -lE '^ExecStart=.*run-phase ' "$units_dir"/omarchy-install-*.service | wc -l)
-  total=${#chain[@]}
-  [[ $total == "$expected" ]] || { echo "chain covers $total of $expected phase units"; return 1; }
-  printf ';%s' "${chain[@]}"
+  mapfile -t all < <(printf '%s\n' "${all[@]}" | sort)
+  remaining=${#all[@]}
+  while ((remaining > 0)); do
+    progressed=0
+    for unit in "${all[@]}"; do
+      [[ -n ${emitted[$unit]:-} ]] && continue
+      ready=1
+      for dep in ${requires[$unit]}; do
+        [[ -n ${is_phase[$dep]:-} && -z ${emitted[$dep]:-} ]] && { ready=0; break; }
+      done
+      ((ready)) || continue
+      emitted[$unit]=1
+      order+=("$unit")
+      remaining=$((remaining - 1))
+      progressed=1
+    done
+    ((progressed)) || { echo "cycle among the unemitted phase units"; return 1; }
+  done
+  frontier=("$terminal")
+  while ((${#frontier[@]})); do
+    unit=${frontier[0]}
+    frontier=("${frontier[@]:1}")
+    [[ -n ${reached[$unit]:-} ]] && continue
+    reached[$unit]=1
+    for dep in ${requires[$unit]:-}; do
+      [[ -n ${is_phase[$dep]:-} ]] && frontier+=("$dep")
+    done
+  done
+  ((${#reached[@]} == ${#all[@]})) ||
+    { echo "terminal closure reaches ${#reached[@]} of ${#all[@]} phase units"; return 1; }
+  printf ';%s' "${order[@]}"
   printf ';'
 }
 GRAPH=$(walk_phase_graph) || { echo "$GRAPH"; false; }
-check 'the Requires= chain covers every phase unit' test -n "$GRAPH"
-check 'disk, image, strap, base sit in order inside it' contains "$GRAPH" \
-  'omarchy-install-disk.service;omarchy-install-image.service;omarchy-install-strap.service;omarchy-install-base.service;'
-check 'the chain begins at the live preparation' contains "$GRAPH" \
+check 'the Requires= graph is acyclic and fully reached from the terminal' test -n "$GRAPH"
+check 'disk, image, strap, base in dependency order' bash -c \
+  "[[ '$GRAPH' == *'omarchy-install-disk.service'*'omarchy-install-image.service'*'omarchy-install-strap.service'*'omarchy-install-base.service'* ]]"
+check 'the graph begins at the live preparation' contains "$GRAPH" \
   ';omarchy-install-prepare-live.service;omarchy-install-prepare-target.service;'
-check 'the chain ends at the factory snapshot' contains "$GRAPH" 'omarchy-install-factory-snapshot.service;'
+check 'the graph ends at the factory snapshot' contains "$GRAPH" 'omarchy-install-factory-snapshot.service;'
 
 section 'pre-mounted target'
 reset; PRE_MOUNT=true; run_split

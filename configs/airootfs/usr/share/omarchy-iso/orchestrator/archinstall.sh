@@ -28,6 +28,24 @@ arch_init_library() {
   ARCHINSTALL_ON_DIE=orchestrator_record_error
 }
 
+# Every chroot in its own mount namespace: arch-chroot mounts /proc, /dev
+# and /sys under the target and tears them down on exit, so two concurrent
+# chroots on one target unmount each other's API filesystems mid-command.
+# A private namespace keeps each invocation's mounts invisible to its
+# siblings and gone with the process — the prerequisite for phase units
+# running in parallel. A function shadowing the command name covers every
+# orchestrator call site and the library's arch_chroot() alike (sys_cmd
+# runs its argv in this shell); unshare then execs the real binary from
+# PATH. The escape hatch is for debugging a namespace-related surprise in
+# the field, not a supported mode.
+arch-chroot() {
+  if [[ ${ORCH_CHROOT_NO_UNSHARE:-} != 1 ]] && command -v unshare >/dev/null; then
+    unshare --mount --propagation private -- arch-chroot "$@"
+  else
+    command arch-chroot "$@"
+  fi
+}
+
 # load_arch_config(): the configurator output as the library sees it.
 arch_load_config() {
   if [[ -f $CTX_CREDS_PATH ]]; then

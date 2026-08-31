@@ -268,7 +268,7 @@ state_dir="$work/state"
 mkdir -p "$units_dir" "$state_dir"
 printf '[Service]\nExecStart=/usr/share/omarchy-iso/orchestrator/run-phase arch_install_system "Installing Arch + Omarchy"\n' \
   >"$units_dir/omarchy-install-strap.service"
-printf 'Pacstrap failed. See /var/log/archinstall.log' >"$state_dir/phase-error"
+printf 'Pacstrap failed. See /var/log/archinstall.log' >"$state_dir/phase-error.omarchy-install-strap.service"
 cat >"$stubs/systemctl" <<'EOF'
 #!/bin/bash
 [[ ${1:-} == show ]] || exit 0

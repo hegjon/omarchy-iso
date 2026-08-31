@@ -89,11 +89,12 @@ cleanup_trap_mechanics() {
   bash -c '
     source "'"$d"'/fn.sh"
     CTX_STATE_DIR="'"$d"'"
+    RUN_PHASE_UNIT=omarchy-install-clean.service
     ORCH_LAST_ERROR="should never be written"
     (exit 0); run_phase_cleanup
   '
   local rc=0
-  [[ -e $d/phase-error ]] && rc=1
+  compgen -G "$d/phase-error.*" >/dev/null && rc=1
   rm -rf "$d"
   return "$rc"
 }
@@ -109,10 +110,11 @@ error_handover() {
   bash -c '
     source "'"$d"'/fn.sh"
     CTX_STATE_DIR="'"$d"'"
+    RUN_PHASE_UNIT=omarchy-install-doomed.service
     ORCH_LAST_ERROR="install medium is corrupt: re-flash it"
     (exit 1); run_phase_cleanup
   '
-  got=$(cat "$d/phase-error" 2>/dev/null)
+  got=$(cat "$d/phase-error.omarchy-install-doomed.service" 2>/dev/null)
   rm -rf "$d"
   [[ $got == "install medium is corrupt: re-flash it" ]]
 }
@@ -127,7 +129,7 @@ graph_failure_prefers_handover() {
     set -eEuo pipefail; trap "echo ERR-TRAP-FIRED; exit 1" ERR
     journalctl() { echo "systemd noise only"; }
     CTX_STATE_DIR="'"$d"'"
-    printf "install medium is too slow: try another USB stick" >"$CTX_STATE_DIR/phase-error"
+    printf "install medium is too slow: try another USB stick" >"$CTX_STATE_DIR/phase-error.some.unit"
     '"$(sed -n '/^phase_graph_failure_detail() {/,/^}/p' "$ORCH/main.sh")"'
     phase_graph_failure_detail some.unit
   ' 2>&1)
@@ -143,6 +145,31 @@ graph_failure_prefers_handover() {
      $fallback == *"systemd noise only"* && $fallback != *ERR-TRAP-FIRED* ]]
 }
 check "the graph failure headline prefers the handed-over message to the journal" graph_failure_prefers_handover
+
+# Every chroot must run in a private mount namespace (concurrent chroots on
+# one target unmount each other's API filesystems), and the escape hatch
+# must reach the real binary. Driven with a recording unshare and a PATH
+# stub standing in for arch-chroot itself.
+chroot_namespace_wrapper() {
+  local d out rc=0
+  d=$(mktemp -d) || return 1
+  printf '#!/bin/bash\necho "real $*" >>"%s/calls"\n' "$d" >"$d/arch-chroot"
+  chmod +x "$d/arch-chroot"
+  out=$(bash -c '
+    unshare() { echo "unshare $*"; }
+    '"$(sed -n '/^arch-chroot() {/,/^}/p' "$ORCH/archinstall.sh")"'
+    arch-chroot /mnt limine-update
+  ')
+  [[ $out == "unshare --mount --propagation private -- arch-chroot /mnt limine-update" ]] || rc=1
+  PATH="$d:$PATH" bash -c '
+    '"$(sed -n '/^arch-chroot() {/,/^}/p' "$ORCH/archinstall.sh")"'
+    ORCH_CHROOT_NO_UNSHARE=1 arch-chroot /mnt limine-update
+  '
+  grep -qx "real /mnt limine-update" "$d/calls" || rc=1
+  rm -rf "$d"
+  return "$rc"
+}
+check "chroots run in private mount namespaces, with a direct fallback" chroot_namespace_wrapper
 
 # The property the deferred-encrypted flavor of that phase depends on: the
 # generated LUKS passphrase is generated once and reused by every later

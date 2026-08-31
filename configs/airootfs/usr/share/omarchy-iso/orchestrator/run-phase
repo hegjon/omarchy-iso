@@ -108,8 +108,11 @@ run_phase_cleanup() {
   # The phase's own words, for the orchestrator's failure message: fail()
   # recorded them in this process, and the journal buries them under
   # command output and systemd's exit lines — hand them over directly.
+  # Keyed by unit name (Environment=RUN_PHASE_UNIT=%n) so concurrent
+  # phases in a fanned graph cannot clobber each other's story; a
+  # hand-run phase outside a unit falls back to its function name.
   [[ -z ${ORCH_LAST_ERROR:-} ]] ||
-    printf '%s' "$ORCH_LAST_ERROR" >"$CTX_STATE_DIR/phase-error" 2>/dev/null
+    printf '%s' "$ORCH_LAST_ERROR" >"$CTX_STATE_DIR/phase-error.${RUN_PHASE_UNIT:-$phase}" 2>/dev/null
 }
 trap run_phase_cleanup EXIT
 

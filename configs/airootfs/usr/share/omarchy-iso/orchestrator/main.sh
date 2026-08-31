@@ -58,7 +58,7 @@ PHASE_GRAPH_TERMINAL=omarchy-install-factory-snapshot.service
 # the fallback.
 phase_graph_failure_detail() {
   local failed_unit=$1 detail
-  detail=$(cat "$CTX_STATE_DIR/phase-error" 2>/dev/null) || true
+  detail=$(cat "$CTX_STATE_DIR/phase-error.$failed_unit" 2>/dev/null) || true
   [[ -n $detail ]] ||
     detail=$(journalctl --no-pager -o cat -b -u "$failed_unit" 2>/dev/null | tail -n 5 | tr '\n' ' ')
   printf '%s' "$detail"
@@ -85,7 +85,7 @@ main() {
   mkdir -p "$CTX_STATE_DIR"
   # Stale handoffs from an aborted earlier attempt in the same session must
   # not leak into this run.
-  rm -f "$CTX_STATE_DIR/phase-error" "$CTX_STATE_DIR/library-state.sh"
+  rm -f "$CTX_STATE_DIR"/phase-error.* "$CTX_STATE_DIR/library-state.sh"
 
   # One blocking start of the terminal phase: its Requires=/After= chain
   # pulls every phase in order; the latched units themselves are the record
