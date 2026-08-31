@@ -1,26 +1,18 @@
 #!/usr/bin/env bash
 # Host one orchestrator phase in its own process, for the systemd phase
-# units: `run-phase install_root_image "Unpacking root image"` is what
-# omarchy-install-image.service execs. Sources the same stack main.sh loads
-# (main.sh runs nothing when sourced), rebuilds the install context from the
-# persisted inputs the unit's EnvironmentFile= handed us, and calls the one
-# function. Its exit status is the unit's Result; its output is the journal,
-# teed into the install log so the support artifact keeps the detail.
-#
-# The install's sequencing lives in the units' Requires=/After= edges, not
-# here and not in a loop: the orchestrator starts the terminal unit and
-# systemd walks the graph. The graph is also the install's state: the units
-# latch (RemainAfterExit=yes), so who is running, who finished and how long
-# they took is systemd's own record -- the dashboard reads it from
-# `systemctl show`, and nothing here writes a second copy.
+# units: `run-phase install_root_image "Unpacking root image"`. Sources the
+# stack main.sh loads (main.sh runs nothing when sourced), rebuilds the
+# context from the unit's EnvironmentFile= inputs, and calls the one
+# function. Sequencing lives in the units' Requires=/After= edges, and the
+# latched units themselves are the install's state -- nothing here writes
+# a second copy.
 set -eEuo pipefail
 
 phase=${1:?usage: run-phase <phase-function> [display-name]}
 phase_name=${2:-$1}
 
-# Which unit hosts this process, from the kernel's own record — no unit-file
-# plumbing. Empty for a hand-run phase outside the graph, and consumers
-# (the target-setup header guard) treat that as being the anchor.
+# Which unit hosts this process, from the kernel's own record; empty for a
+# hand-run phase, which consumers treat as being the anchor.
 RUN_PHASE_UNIT=$(awk -F/ '$NF ~ /^omarchy-install-.*\.service$/ { print $NF; exit }' /proc/self/cgroup 2>/dev/null) || RUN_PHASE_UNIT=""
 
 # shellcheck disable=SC1091
@@ -31,38 +23,25 @@ declare -F "$phase" >/dev/null ||
 
 ctx_from_env
 
-# The journal keeps the raw stream; the install log (the support artifact
-# the dashboard tails and `log` fetches) gets a filtered copy -- the shared
-# log-filter.sed strips terminal control sequences and the archinstall-bash
-# banners that would contradict a later failure (the dashboard applies the
-# same filter to the orchestrator child's output). Best effort: an
-# unwritable log (a test harness, a hand-run phase) must not cost the phase
-# its output or its run.
+# The journal keeps the raw stream; the install log gets a filtered copy
+# through the shared log-filter.sed (CSI strip + the banners that would
+# contradict a later failure). Best effort: an unwritable log (test
+# harness, hand-run) must not cost the phase its run.
 if [[ -n ${CTX_LOG_PATH:-} ]] && touch "$CTX_LOG_PATH" 2>/dev/null; then
   exec > >(tee >(sed -u -f "$ORCHESTRATOR_DIR/log-filter.sed" >>"$CTX_LOG_PATH") 2>/dev/null) 2>&1
 fi
 
-# The library's view of the configuration, so any phase function is hostable
-# here — the later phases read CFG_* and the PART_* planning the config parse
-# produces. Reloading per process is the established pattern: config_load is
-# deterministic from the JSON ctx_from_env resolved.
+# Reload the library's config view per process: deterministic from the
+# JSON ctx_from_env resolved, so any phase function is hostable here.
 arch_init_library
 arch_load_config
 
-# The cross-phase state: what the old single-process install passed
-# between steps for free, made explicit for the phase units. The parse
-# above rebuilds everything derivable from the JSON; these are the values
-# only the run itself could produce. The verified library edges: the disk
-# phase's format-time PART_* discoveries (device nodes, partition numbers,
-# the UUIDs mkfs assigned) feed the strap's Limine setup and kernel
-# params, and the strap's INST_HELPER_FLAGS ledger feeds
-# installer_finish's audit in the base phase. (INST_ZRAM_ENABLED is set
-# and read within the strap's own process and does not belong here; the
-# target-setup start time is the anchor unit's systemd timestamp and the
-# prepare memo is idempotent per process, so no CTX_ value travels.)
-# Every phase restores the state and persists it back only when its run
-# changed something, so the handoff needs no per-phase code and relay
-# phases write nothing.
+# The cross-phase library state: values only the run itself could produce.
+# Verified edges: the disk phase's format-time PART_* discoveries feed the
+# strap's Limine setup, and the strap's INST_HELPER_FLAGS ledger feeds
+# installer_finish's audit in the base phase. Each phase restores this and
+# persists it back only when its run changed something, so relay phases
+# write nothing and stay safe beside each other in a fanned graph.
 LIBRARY_STATE_VARS=(PART_DEVPATH PART_PARTN PART_PARTUUID PART_UUID
                     INST_HELPER_FLAGS)
 
@@ -82,39 +61,27 @@ persist_library_state() {
 [[ ! -f "$CTX_STATE_DIR/library-state.sh" ]] || source "$CTX_STATE_DIR/library-state.sh"
 LIBRARY_STATE_RESTORED=$(library_state_snapshot)
 
-# The destruction boundary, enforced here rather than trusted to ordering:
-# every hosted phase so far operates on the prepared target, and must never
-# run before the disk phase has formatted and mounted it — not from a stray
-# manual `systemctl start`, and not from a mis-edged future graph. A unit
-# hosting a pre-format phase declares Environment=RUN_PHASE_NO_TARGET=1 to
-# opt out. A loud failure, deliberately not a systemd Condition: conditions
-# cannot read the env-provided target path, and a false condition skips
-# with success — the graph would count the phase as done.
+# The destruction boundary: no hosted phase may run before the disk phase
+# mounted the target. Deliberately a loud failure, not a systemd
+# Condition= -- conditions cannot read the env-provided path, and a false
+# condition skips with success, which the graph would count as done. A
+# pre-format phase opts out with Environment=RUN_PHASE_NO_TARGET=1.
 if [[ ${RUN_PHASE_NO_TARGET:-} != 1 ]] && ! mountpoint -q "$CTX_TARGET"; then
   fail "run-phase: $CTX_TARGET is not a mounted install target; refusing to run $phase before the disk phase"
 fi
 
-# The phase's stage mounts (image-top, factory-top) are systemd mounts with
-# PartOf=omarchy-install.target: a mid-phase death is followed by the
-# orchestrator stopping the target, and the group teardown unmounts them.
-# This trap owns only the error handover -- the failure itself is the
-# unit's Result, which is where the dashboard reads it.
+# The trap owns only the error handover; the failure itself is the unit's
+# Result, and stage mounts are PartOf= the target's group teardown.
 run_phase_cleanup() {
   local status=$?
   ((status != 0)) || return 0
-  # A signal (SIGTERM from the group abort, typically) is the install being
-  # torn down around this phase, not the phase failing: the orchestrator
-  # writes that story.
+  # A signal is the install being torn down around this phase, not the
+  # phase failing: the orchestrator writes that story.
   ((status < 128)) || return 0
-  # The phase's own words, for the orchestrator's failure message: fail()
-  # recorded them in this process, and the plain journal stream buries
-  # them under command output and systemd's exit lines. A separate entry
-  # under its own identifier is precisely extractable. The unit name rides
-  # IN each line, not in journald's attribution: the unit's cgroup is torn
-  # down milliseconds after this trap, and cgroup-based _SYSTEMD_UNIT
-  # attribution loses that race (measured: the entries arrived with the
-  # identifier but no unit field). The prefix also keys concurrent
-  # failures apart once the graph fans out.
+  # fail()'s words, as a journal entry under our own identifier -- the
+  # plain unit stream buries them. The unit name rides IN each line:
+  # cgroup-based attribution loses the race against the unit's teardown
+  # (measured), and the prefix keys concurrent failures apart.
   [[ -z ${ORCH_LAST_ERROR:-} ]] ||
     printf '%s\n' "$ORCH_LAST_ERROR" | sed "s/^/${RUN_PHASE_UNIT:-$phase}: /" |
       systemd-cat -t omarchy-phase-error -p err 2>/dev/null || true
@@ -125,8 +92,6 @@ info "› $phase_name"
 
 "$phase"
 
-# Reached only on success (set -e): hand this process's library state to
-# the next phase's -- but only when this phase actually changed it. Relay
-# phases stay read-only, which also makes them safe beside each other if
-# the graph ever fans out.
+# Reached only on success (set -e): hand the library state to the next
+# phase's process, only when this run changed it.
 [[ "$(library_state_snapshot)" == "$LIBRARY_STATE_RESTORED" ]] || persist_library_state
