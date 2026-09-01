@@ -30,7 +30,12 @@ NotifyAccess=all
 EnvironmentFile=/usr/share/omarchy-iso/orchestrator/context.env
 EnvironmentFile=-/run/omarchy-install/context.env
 EnvironmentFile=-/run/omarchy-install/install.env
+# The live system's boot-image pacman hooks are masked around the pacstraps
+# by this unit's own Pre/Post pair, so systemd guarantees the unmask on every
+# exit path (the target-side masks live on the system unit the same way).
+ExecStartPre=/usr/share/omarchy-iso/orchestrator/run-phase mask_live_boot_hooks "masking live boot hooks"
 ExecStart=/usr/share/omarchy-iso/orchestrator/run-phase install_system_payload "Installing Arch + Omarchy"
+ExecStopPost=/usr/share/omarchy-iso/orchestrator/run-phase unmask_live_boot_hooks "restoring live boot hooks"
 # A few hundred MB of pacstraps off the medium; half an hour is a
 # dead-medium guard, not a budget (the boot verifies already proved the
 # mirror readable at full speed).

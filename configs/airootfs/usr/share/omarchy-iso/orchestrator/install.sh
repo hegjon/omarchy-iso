@@ -159,8 +159,6 @@ install_system_payload() {
     installer_set_mirrors live
   fi
 
-  mask_mkinitcpio_pacman_hooks / "${DEFERRED_BOOT_HOOKS[@]}"
-
   info '› installing per-machine packages (mkinitcpio deferred to final Limine UKI build)'
   # The base strap reduces to the packages the image does not carry (the
   # kernel and the CPU microcode — the library straps only what the target
@@ -199,8 +197,6 @@ install_system_payload() {
     info '› installing tailscale (auth key staged for first boot)'
     installer_add_additional_packages tailscale
   fi
-
-  unmask_mkinitcpio_pacman_hooks / "${DEFERRED_BOOT_HOOKS[@]}"
 
   # After the last pacstrap: each one runs its own pacman-key --init on the
   # target's gnupg dir. Runs on while the phases after this one configure
@@ -278,6 +274,18 @@ DEFERRED_BOOT_HOOKS=(
 # The kernel-removal hooks stay live: they only prune Limine entries, which is
 # exactly what ptl-kernel.sh's "pacman -Rdd linux" needs.
 TARGET_DEFERRED_BOOT_HOOKS=(90-mkinitcpio-install.hook)
+
+# The strap unit's ExecStartPre=/ExecStopPost= pair: the live system's
+# boot-image hooks are masked around the pacstraps and systemd runs the
+# unmask on every exit path -- failure, group abort, SIGKILL of the phase
+# included -- which no bash trap can promise.
+mask_live_boot_hooks() {
+  mask_mkinitcpio_pacman_hooks / "${DEFERRED_BOOT_HOOKS[@]}"
+}
+
+unmask_live_boot_hooks() {
+  unmask_mkinitcpio_pacman_hooks / "${DEFERRED_BOOT_HOOKS[@]}"
+}
 
 is_devnull_symlink() {
   [[ -L $1 && $(readlink "$1") == /dev/null ]]

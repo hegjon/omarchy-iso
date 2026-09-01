@@ -34,6 +34,9 @@ ExecStart=/usr/local/bin/omarchy-prefetch execute ${RUNTIME_DIRECTORY}/plan
 # Background work: the console, the verifies and the install always win.
 # Idle-class I/O means a prefetch still running when btrfs receive claims
 # the medium yields it entirely.
+# Nothing waits on the prefetch, but a reader hung on a dying medium must
+# not linger unbounded; the strap's cap, for the same class of read.
+TimeoutStartSec=1800
 Nice=15
 IOSchedulingClass=idle
 

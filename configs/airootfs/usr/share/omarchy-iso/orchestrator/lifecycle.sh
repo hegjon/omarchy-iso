@@ -3,12 +3,6 @@
 # protected target are put back on every exit path (mounts are systemd's:
 # PartOf= the install target tears them down). All idempotent.
 
-# The live hook masks install_system_payload puts up around pacstrap; Python
-# restored them in that phase's finally.
-cleanup_live_hook_masks() {
-  unmask_mkinitcpio_pacman_hooks / "${DEFERRED_BOOT_HOOKS[@]}"
-}
-
 # Restore the target's deferred boot hooks. Idempotent, and a no-op when
 # nothing was masked, so the exit trap can call it on any exit path: an
 # interrupt must never leave the installed system with its UKI rebuild hook
@@ -60,18 +54,14 @@ orchestrator_on_exit() {
       [[ $status -ne 0 ]] || status=1
     fi
   fi
-  # Stopping the target is the group abort and the governor restore in one:
-  # PartOf= takes down any running phase unit cgroup-complete, and the CPU
-  # boost unit's ExecStop puts the saved governors back. Idempotent when
-  # nothing is running.
+  # Stopping the target is the whole group teardown and the governor
+  # restore in one: every phase unit, the keyring unit and the stage mounts
+  # are PartOf= it, the CPU boost unit's ExecStop puts the governors back,
+  # and the hook masks --
+  # live and target -- are their units' own ExecStopPost=, run by the stop
+  # itself. (The limine phase still repairs and asserts the target's hooks
+  # via cleanup_target_hook_masks before handover.)
   systemctl stop omarchy-install.target >/dev/null 2>&1 || true
-  # No-op after a completed install (create_factory_snapshot joined it); on a
-  # failure it ends the unit before the target is torn down.
-  stop_target_keyring_init
-  cleanup_live_hook_masks
-  # The target's hook masks are the system unit's own ExecStopPost= now;
-  # the stop above already ran it. (The limine phase still repairs and
-  # asserts via cleanup_target_hook_masks before handover.)
   [[ $ORCH_SUCCESS == true ]] || cleanup_protected_state
   exit "$status"
 }

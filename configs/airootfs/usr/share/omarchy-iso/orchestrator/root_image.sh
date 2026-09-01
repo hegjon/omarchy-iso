@@ -364,7 +364,7 @@ receive_root_image() {
 # the rest of the unit's cgroup the moment pacman-key exits (sockets under
 # the target's gnupg dir would otherwise block the unmount); the dashboard's
 # process-group kill does not reach it, while `systemctl stop` still does
-# (stop_target_keyring_init); and its output is in the journal whatever
+# (the group stop of omarchy-install.target, which it is PartOf=); and its output is in the journal whatever
 # happens to the orchestrator.
 #
 # The unit is shipped, omarchy-target-keyring.service, and reads the target
@@ -404,10 +404,3 @@ join_target_keyring_init() {
   return 0
 }
 
-# Exit path: end the keyring unit if it is still running, so nothing keeps
-# writing into the target after the install has stopped. `systemctl stop` is
-# synchronous -- when it returns, the unit's cgroup is gone -- and stopping
-# a unit that never ran is its own no-op.
-stop_target_keyring_init() {
-  systemctl stop "$TARGET_KEYRING_UNIT" >/dev/null 2>&1 || true
-}

@@ -52,7 +52,7 @@ section 'full-disk order'
 reset; run_split
 check 'phases ok' eq "$?" 0
 check 'sequence' eq "$(steps)" \
-'fs_perform_filesystem_operations;installer_mount_ordered_layout;require_target_is_mnt;installer_set_mirrors live;mask /;installer_minimal_installation --no-mkinitcpio;installer_set_mirrors on_target;installer_setup_swap;configure_limine_boot;installer_create_users;applications_install;unmask /;start_target_keyring_init;unmount_offline_package_cache;installer_set_timezone UTC;installer_activate_time_synchronization;installer_set_user_password root $y$hash;installer_genfstab;installer_finish;'
+'fs_perform_filesystem_operations;installer_mount_ordered_layout;require_target_is_mnt;installer_set_mirrors live;installer_minimal_installation --no-mkinitcpio;installer_set_mirrors on_target;installer_setup_swap;configure_limine_boot;installer_create_users;applications_install;start_target_keyring_init;unmount_offline_package_cache;installer_set_timezone UTC;installer_activate_time_synchronization;installer_set_user_password root $y$hash;installer_genfstab;installer_finish;'
 
 section 'library-state handoff between phase processes'
 # The persist/restore pair extracted from run-phase, driven the way two
@@ -82,10 +82,9 @@ check 'library state survives the process boundary' handoff_roundtrip
 
 section 'invariants'
 check 'mkinitcpio deferred to the final UKI build' contains "$(steps)" 'installer_minimal_installation --no-mkinitcpio'
-check 'limine set up after the base delta, before useradd' test "$(calls | grep -n 'configure_limine_boot\|installer_create_users' | cut -d: -f1 | tr '\n' ' ')" == '9 10 '
-check 'package cache unmounted before genfstab' test "$(calls | grep -n 'unmount_offline_package_cache\|installer_genfstab' | cut -d: -f1 | tr '\n' ' ')" == '14 18 '
-check 'live hooks unmasked after the last pacstrap' test "$(calls | grep -n 'applications_install\|^unmask' | cut -d: -f1 | tr '\n' ' ')" == '11 12 '
-check 'keyring init started after the last pacstrap' test "$(calls | grep -n 'applications_install\|start_target_keyring_init' | cut -d: -f1 | tr '\n' ' ')" == '11 13 '
+check 'limine set up after the base delta, before useradd' test "$(calls | grep -n 'configure_limine_boot\|installer_create_users' | cut -d: -f1 | tr '\n' ' ')" == '8 9 '
+check 'package cache unmounted before genfstab' test "$(calls | grep -n 'unmount_offline_package_cache\|installer_genfstab' | cut -d: -f1 | tr '\n' ' ')" == '12 16 '
+check 'keyring init started after the last pacstrap' test "$(calls | grep -n 'applications_install\|start_target_keyring_init' | cut -d: -f1 | tr '\n' ' ')" == '10 11 '
 
 section 'phase wiring'
 # The unit graph as a DAG, the way the dashboard's roster reads it: every
@@ -165,7 +164,7 @@ done
 
 section 'tailscale package when an auth key is staged'
 reset; CTX_TAILSCALE_AUTHKEY_PATH="$TMP/authkey"; run_split
-check 'installed while the mirror is mounted' test "$(calls | grep -n 'installer_add_additional_packages tailscale\|unmount_offline' | cut -d: -f1 | tr '\n' ' ')" == '12 15 '
+check 'installed while the mirror is mounted' test "$(calls | grep -n 'installer_add_additional_packages tailscale\|unmount_offline' | cut -d: -f1 | tr '\n' ' ')" == '11 13 '
 
 section 'a failing step aborts the phase'
 reset; installer_minimal_installation() { record minimal; fail 'pacstrap exploded'; }

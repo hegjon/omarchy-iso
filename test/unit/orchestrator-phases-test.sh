@@ -6,10 +6,8 @@
 # shellcheck disable=SC1091
 source "$(dirname -- "${BASH_SOURCE[0]}")/orchestrator-harness.sh"
 
-cleanup_live_hook_masks() { record cleanup_live_hook_masks; }
 cleanup_target_hook_masks() { record cleanup_target_hook_masks; }
 cleanup_protected_state() { record cleanup_protected_state; }
-stop_target_keyring_init() { record stop_target_keyring_init; }
 systemctl() { record "systemctl $*"; }
 error() { printf '%s\n' "$*" >&2; }
 
@@ -89,7 +87,7 @@ reset_calls
 check 'exit 1' eq "$?" 1
 check 'halt message' contains "$(cat "$ERR")" 'Installation halted.'
 check 'group abort issued' contains "$(calls)" 'systemctl stop omarchy-install.target'
-check 'cleanups ran' contains "$(calls)" cleanup_live_hook_masks
+check 'the protected-target release ran' contains "$(calls)" cleanup_protected_state
 check 'the target hook unmask is the system unit'\''s, not the trap'\''s' \
   test -z "$(calls | grep cleanup_target_hook_masks || true)"
 
