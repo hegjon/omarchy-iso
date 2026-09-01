@@ -227,7 +227,7 @@ cmd_log() {
   scp -O "${SSH_OPTS[@]}" "root@$HOST:/var/log/omarchy-install.log" "$dest"
   # The phases log to the journal alone (timestamped); fetch that half of
   # the story beside the session log.
-  rssh "$HOST" "journalctl -b -u 'omarchy-install-*' -o short-iso --no-pager;
+  rssh "$HOST" "journalctl -b -u 'omarchy-*' -o short-iso --no-pager;
     journalctl -b -t omarchy-phase-error -t omarchy-install-milestone -o short-iso --no-pager" \
     >"$dest.journal" 2>/dev/null || true
   echo "saved: $dest (+ $dest.journal)"

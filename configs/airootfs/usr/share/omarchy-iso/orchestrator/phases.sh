@@ -78,14 +78,16 @@ phases_finalize() {
 # flat log never had. Appended to a log file at the two ends an install can
 # reach: onto the installed system at finalize, and onto the live session
 # log when the install fails, so "Upload log for support" and the media
-# diagnosis see the failing phase's words and not just the headline. Two
-# queries: -u and -t do not compose in one (measured on the phase-error
-# handover).
+# diagnosis see the failing phase's words and not just the headline. Every
+# omarchy-* unit, not only the phases: the verifies, the prefetch, the
+# pacman sync and the keyring unit are the install's supporting cast, and a
+# failure often starts in one of them. Two queries: -u and -t do not
+# compose in one (measured on the phase-error handover).
 export_install_journal() {
   local dest=$1
   {
-    printf '\n=== install journal (per-phase output) ===\n'
-    journalctl -b -u 'omarchy-install-*' -o short-iso --no-pager 2>/dev/null |
+    printf '\n=== install journal (omarchy-* units) ===\n'
+    journalctl -b -u 'omarchy-*' -o short-iso --no-pager 2>/dev/null |
       sed -f "${ORCHESTRATOR_DIR:-/usr/share/omarchy-iso/orchestrator}/log-filter.sed"
     journalctl -b -t omarchy-phase-error -t omarchy-install-milestone -o short-iso --no-pager 2>/dev/null
   } >>"$dest" || true
