@@ -75,9 +75,31 @@ check 'finished stamp present' test "$(jq -r .finished_at "$TIMING")" != null
 unset OMARCHY_INSTALL_UNITS_DIR
 systemctl() { record "systemctl $*"; }
 
+section 'the journal export lands beside the session log'
+# The stub answers both queries the export makes: the unit glob with a
+# phase's own line (plus an escape sequence the filter must strip) and the
+# identifier query with the milestone pair.
+journalctl() {
+  if [[ $* == *"-u omarchy-install-*"* ]]; then
+    printf '2026-09-01T09:36:00+00:00 archiso run-phase[99]: \033[1mpacstrap\033[0m: package foo is corrupted\n'
+  else
+    printf '2026-09-01T09:35:00+00:00 archiso omarchy-install-milestone[1]: -----BEGIN OMARCHY INSTALL-----\n'
+  fi
+}
+ORCHESTRATOR_DIR="$ORCHESTRATOR"
+export_install_journal "$TMP/exported.log"
+EXPORTED=$(cat "$TMP/exported.log")
+check 'section header' contains "$EXPORTED" '=== install journal (per-phase output) ==='
+check 'the phase output, escapes filtered' contains "$EXPORTED" 'run-phase[99]: pacstrap: package foo is corrupted'
+check 'the milestones follow' contains "$EXPORTED" '-----BEGIN OMARCHY INSTALL-----'
+check 'the finalize appended it to the target log' \
+  contains "$(cat "$CTX_TARGET/var/log/omarchy-install.log")" '=== install journal (per-phase output) ==='
+
 section 'exit trap: cleanup on the failure path'
 fresh_target
 reset_calls
+CTX_LOG_PATH="$TMP/live-session.log"
+printf '[orchestrator] Installing Omarchy\n' >"$CTX_LOG_PATH"
 (
   set -eEuo pipefail
   trap 'orchestrator_on_err "$?" "$BASH_COMMAND" "${BASH_SOURCE[0]}" "$LINENO"' ERR
@@ -88,6 +110,12 @@ check 'exit 1' eq "$?" 1
 check 'halt message' contains "$(cat "$ERR")" 'Installation halted.'
 check 'group abort issued' contains "$(calls)" 'systemctl stop omarchy-install.target'
 check 'the protected-target release ran' contains "$(calls)" cleanup_protected_state
+check 'the failing phases'\'' journal is appended to the session log' \
+  contains "$(cat "$CTX_LOG_PATH")" 'package foo is corrupted'
+check 'the session log keeps its spine first' \
+  test "$(head -n1 "$CTX_LOG_PATH")" == '[orchestrator] Installing Omarchy'
+journalctl() { :; }
+unset CTX_LOG_PATH
 check 'the target hook unmask is the system unit'\''s, not the trap'\''s' \
   test -z "$(calls | grep cleanup_target_hook_masks || true)"
 

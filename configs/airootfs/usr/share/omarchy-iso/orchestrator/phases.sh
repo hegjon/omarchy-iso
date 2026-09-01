@@ -71,16 +71,24 @@ phases_finalize() {
               | {name: .[1], status: .[2], elapsed: (.[3] | tonumber)}]}' \
     >"$timing"
 
-  # The phases' own output lives in the journal, timestamped -- something
-  # the flat log never had. Export it onto the installed system beside the
-  # session log the target already carries. Two queries: -u and -t do not
-  # compose in one (measured on the phase-error handover).
+  export_install_journal "$CTX_TARGET/var/log/omarchy-install.log"
+}
+
+# The phases' own output lives in the journal, timestamped -- something the
+# flat log never had. Appended to a log file at the two ends an install can
+# reach: onto the installed system at finalize, and onto the live session
+# log when the install fails, so "Upload log for support" and the media
+# diagnosis see the failing phase's words and not just the headline. Two
+# queries: -u and -t do not compose in one (measured on the phase-error
+# handover).
+export_install_journal() {
+  local dest=$1
   {
-    printf '\n=== install journal (per-phase output, exported at finalize) ===\n'
+    printf '\n=== install journal (per-phase output) ===\n'
     journalctl -b -u 'omarchy-install-*' -o short-iso --no-pager 2>/dev/null |
       sed -f "${ORCHESTRATOR_DIR:-/usr/share/omarchy-iso/orchestrator}/log-filter.sed"
     journalctl -b -t omarchy-phase-error -t omarchy-install-milestone -o short-iso --no-pager 2>/dev/null
-  } >>"$CTX_TARGET/var/log/omarchy-install.log" || true
+  } >>"$dest" || true
 }
 
 # _installed_package_count(): one directory per package under local/, which

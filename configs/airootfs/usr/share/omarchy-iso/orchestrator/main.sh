@@ -76,7 +76,7 @@ main() {
   info "Installing Omarchy for $who → $CTX_TARGET"
   # The span the user experiences, marked in the journal: this process
   # starts the moment the configurator hands over, and the finish marker
-  # lands after the timing record. The dashboard reads the pair back by
+  # lands once the graph completes. The dashboard reads the pair back by
   # identifier (epoch stamps via -o short-unix) for its installed-in line.
   printf '%s\n' '-----BEGIN OMARCHY INSTALL-----' | systemd-cat -t omarchy-install-milestone 2>/dev/null || true
 
@@ -108,10 +108,12 @@ main() {
     fail "install phase ${failed_unit:-graph} failed: $(phase_graph_failure_detail "${failed_unit:-$PHASE_GRAPH_TERMINAL}")"
   fi
 
+  # The END marker lands before the finalize so the journal copy it exports
+  # onto the target carries both ends of the span.
+  printf '%s\n' '-----END OMARCHY INSTALL-----' | systemd-cat -t omarchy-install-milestone 2>/dev/null || true
   phases_finalize
 
   ORCH_SUCCESS=true
-  printf '%s\n' '-----END OMARCHY INSTALL-----' | systemd-cat -t omarchy-install-milestone 2>/dev/null || true
   info 'Installation complete.'
 }
 

@@ -62,7 +62,12 @@ orchestrator_on_exit() {
   # itself. (The limine phase still repairs and asserts the target's hooks
   # via cleanup_target_hook_masks before handover.)
   systemctl stop omarchy-install.target >/dev/null 2>&1 || true
-  [[ $ORCH_SUCCESS == true ]] || cleanup_protected_state
+  if [[ $ORCH_SUCCESS != true ]]; then
+    cleanup_protected_state
+    # After the group stop every phase's last words are in the journal:
+    # append them to the session log the failure screen uploads and reads.
+    [[ -n ${CTX_LOG_PATH:-} ]] && export_install_journal "$CTX_LOG_PATH"
+  fi
   exit "$status"
 }
 

@@ -907,6 +907,9 @@ prompt_enter() {
   IFS= read -r _ <"$TTY_PATH" || true
 }
 
+# omarchy-upload-log ships in omarchy-settings, a live ISO package: it posts
+# the session log (the failing phases' journal is appended to it by the
+# orchestrator's exit) and the archinstall library log.
 upload_failure_log() {
   local uploader
   printf '%s%s' "$SHOW_CURSOR" "$CLEAR" >"$TTY_PATH" 2>/dev/null || true
@@ -1115,7 +1118,7 @@ if (( status != 0 )); then
   failure_summary=""
   # A failed phase unit keeps its failed state through the group teardown
   # (stop is a no-op on it), and its own last words were handed over
-  # through the state dir; a death outside any phase leaves neither, and
+  # through the journal; a death outside any phase leaves neither, and
   # the log tail on the failure screen carries that story.
   read_phase_state || true
   phase_error="$(journalctl -b -t omarchy-phase-error -o cat --no-pager 2>/dev/null |

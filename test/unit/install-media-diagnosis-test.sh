@@ -275,8 +275,8 @@ printf 'ActiveState=failed\nStatusText=\n'
 EOF
 cat >"$stubs/journalctl" <<'EOF'
 #!/bin/bash
-[[ $* == *"SYSLOG_IDENTIFIER=omarchy-phase-error"* ]] || exit 0
-printf 'Pacstrap failed. See /var/log/archinstall.log\n'
+[[ $* == *"-t omarchy-phase-error"* ]] || exit 0
+printf 'omarchy-install-strap.service: Pacstrap failed. See /var/log/archinstall.log\n'
 EOF
 chmod +x "$stubs/systemctl" "$stubs/journalctl"
 
