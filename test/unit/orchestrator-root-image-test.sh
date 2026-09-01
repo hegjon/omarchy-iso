@@ -95,6 +95,14 @@ run_phase receive_root_image "$TMP/top" "$TMP/stream.zst"
 check 'a dying receive fails the phase' test "$?" -ne 0
 check 'and names the receive stage' contains "$(cat "$ERR")" 'btrfs receive failed'
 
+# Both ends broken at once: which of them broke the pipe cannot be read off
+# the exit codes, so the headline must name both instead of picking one and
+# sending the reader after the wrong stage.
+run_phase receive_root_image "$TMP/top" "$TMP/garbage.zst"
+check 'two dead stages fail the phase' test "$?" -ne 0
+check 'and the headline names both' contains "$(cat "$ERR")" \
+  'root image decompression and btrfs receive both failed'
+
 section 'the subvolume dance'
 fresh_target
 ROOT_IMAGE_STREAM="$TMP/omarchy-root.btrfs.zst"

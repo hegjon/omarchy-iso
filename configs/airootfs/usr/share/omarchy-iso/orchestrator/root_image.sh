@@ -336,9 +336,18 @@ receive_root_image() {
   rm -f "$pipe"
   if ((receive_code != 0 || unzstd_code != 0)); then
     # Both children share the error file, so the full story is in the detail
-    # either way; the headline names the stage that broke the pipe.
-    local stage="btrfs receive"
-    ((receive_code != 0)) || stage="root image decompression"
+    # either way. When both died, which one broke the pipe is not knowable
+    # from the exit codes: a corrupt outer layer kills the decompressor and
+    # starves the receive, while a receive that dies first EPIPEs the
+    # decompressor. The headline names both rather than guessing a culprit,
+    # and the detail -- zstd's "premature end", the receive's own complaint
+    # -- disambiguates.
+    local stage='root image decompression'
+    if ((unzstd_code != 0 && receive_code != 0)); then
+      stage='root image decompression and btrfs receive both'
+    elif ((receive_code != 0)); then
+      stage='btrfs receive'
+    fi
     fail "$stage failed: $(tr -d '\0' <"$err")"
   fi
   phases_write_progress 1
