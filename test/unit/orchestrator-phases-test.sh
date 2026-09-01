@@ -81,7 +81,7 @@ section 'the journal export lands beside the session log'
 # phases -- with a phase's own line (plus an escape sequence the filter must
 # strip) and a verify unit's, and the identifier query with the milestones.
 journalctl() {
-  if [[ $* == *"-u omarchy-*"* ]]; then
+  if [[ $* == *"-u *omarchy*"* ]]; then
     printf '2026-09-01T09:35:30+00:00 archiso omarchy-verify-mirror[80]: mirror checksum verified\n'
     printf '2026-09-01T09:36:00+00:00 archiso run-phase[99]: \033[1mpacstrap\033[0m: package foo is corrupted\n'
   else
@@ -91,12 +91,12 @@ journalctl() {
 ORCHESTRATOR_DIR="$ORCHESTRATOR"
 export_install_journal "$TMP/exported.log"
 EXPORTED=$(cat "$TMP/exported.log")
-check 'section header' contains "$EXPORTED" '=== install journal (omarchy-* units) ==='
+check 'section header' contains "$EXPORTED" '=== install journal (*omarchy* units) ==='
 check 'the phase output, escapes filtered' contains "$EXPORTED" 'run-phase[99]: pacstrap: package foo is corrupted'
 check 'the supporting units are in it too' contains "$EXPORTED" 'omarchy-verify-mirror[80]: mirror checksum verified'
 check 'the milestones follow' contains "$EXPORTED" '-----BEGIN OMARCHY INSTALL-----'
 check 'the finalize appended it to the target log' \
-  contains "$(cat "$CTX_TARGET/var/log/omarchy-install.log")" '=== install journal (omarchy-* units) ==='
+  contains "$(cat "$CTX_TARGET/var/log/omarchy-install.log")" '=== install journal (*omarchy* units) ==='
 
 section 'exit trap: cleanup on the failure path'
 fresh_target
