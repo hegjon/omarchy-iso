@@ -73,7 +73,7 @@ else
   done
 fi
 
-omarchy-pkg-add qemu-full edk2-ovmf socat imagemagick tesseract tesseract-data-eng mtools
+omarchy-pkg-add qemu-full edk2-ovmf socat imagemagick tesseract tesseract-data-eng mtools libisoburn
 
 export OMARCHY_INTEGRATION_ISO
 OMARCHY_INTEGRATION_ISO=$(realpath "$ISO")
