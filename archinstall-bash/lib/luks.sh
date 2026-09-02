@@ -38,7 +38,7 @@ luks_format() {
   [[ -n $password ]] || die 'Password for luks2 device was not specified'
   debug "Luks2 encrypting: $dev"
   sys_cmd_input "$password" cryptsetup --batch-mode --verbose --type luks2 --pbkdf argon2id --hash sha512 \
-    --key-size 512 --iter-time "$iter_time" --use-urandom --key-file - luksFormat "$dev" ||
+    --key-size 512 --iter-time "$iter_time" --sector-size 4096 --use-urandom --key-file - luksFormat "$dev" ||
     die "Could not encrypt volume \"$dev\": $SYS_CMD_OUTPUT"
 }
 
