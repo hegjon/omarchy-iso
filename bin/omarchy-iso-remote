@@ -459,8 +459,14 @@ cmd_autoinstall() {
      users: [{enc_password: $hash, groups: [], sudo: true, username: $user}]}
     + (if $enc then {encryption_password: $pw} else {} end)' >"$dir/user_credentials.json"
 
+  # --encrypt must reach the installer the way the configurator's own output
+  # does: as a disk_encryption block naming the root partition (plus the
+  # flag file and the password in the credentials). The flag file alone
+  # makes the boot validation expect LUKS while the disk phase, reading only
+  # the JSON, formats plain btrfs -- the install then halts at validate-boot.
   jq -n --arg disk "$target" --arg hostname "$hostname" \
     --arg runtime "$runtime" --arg settings "$settings" \
+    --argjson enc "$encrypt" --arg pw "$password" \
     --argjson boot_start "$boot_start" --argjson boot_size "$boot_size" \
     --argjson main_start "$main_start" --argjson main_size "$main_size" '
     {app_config: null, auth_config: {},
@@ -472,7 +478,7 @@ cmd_autoinstall() {
        boot: {esp_mount: "/boot", esp_path: "/EFI/limine",
               efi_binary: "limine_x64.efi", enable_fallback: true},
        storage: {kernel: "linux"}},
-     disk_config: {config_type: "default_layout", device_modifications: [
+     disk_config: ({config_type: "default_layout", device_modifications: [
        {device: $disk, wipe: true, partitions: [
          {btrfs: [], dev_path: null, flags: ["boot", "esp"], fs_type: "fat32",
           mount_options: [], mountpoint: "/boot",
@@ -488,7 +494,11 @@ cmd_autoinstall() {
           obj_id: "8c2c2b92-1070-455d-b76a-56263bab24aa",
           size: {sector_size: {unit: "B", value: 512}, unit: "B", value: $main_size},
           start: {sector_size: {unit: "B", value: 512}, unit: "B", value: $main_start},
-          status: "create", type: "primary"}]}]},
+          status: "create", type: "primary"}]}]}
+       + (if $enc then {disk_encryption: {
+            encryption_type: "luks", lvm_volumes: [], iter_time: 2000,
+            partitions: ["8c2c2b92-1070-455d-b76a-56263bab24aa"],
+            encryption_password: $pw}} else {} end)),
      hostname: $hostname, kernels: ["linux"],
      network_config: {type: "iso"}, ntp: true, parallel_downloads: 8,
      script: null, services: [],
