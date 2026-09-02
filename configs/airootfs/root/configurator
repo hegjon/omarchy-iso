@@ -734,7 +734,7 @@ run_partition_execute() {
       # not become an argv the process table can show. Folding stderr into
       # stdout still lands any error in the install log.
       if ! printf "%s" "$password" |
-        cryptsetup luksFormat --type luks2 --batch-mode "$root_partition_device" - 2>&1; then
+        cryptsetup luksFormat --type luks2 --sector-size 4096 --batch-mode "$root_partition_device" - 2>&1; then
         disk_abort_hook "Formatting LUKS2 on $root_partition_device failed"
       fi
       if ! printf "%s" "$password" |
