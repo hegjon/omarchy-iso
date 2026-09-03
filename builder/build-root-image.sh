@@ -169,7 +169,7 @@ root="$mnt/$IMAGE_SUBVOLUME"
 #     initialised here (-K): its master key would be the same on every
 #     install, and a shared signing key must never be distributed. The
 #     installer initialises and populates a per-machine keyring on the target
-#     (phases_impl._init_target_keyring), as pacstrap -K plus the keyring
+#     (omarchy-target-keyring.service), as pacstrap -K plus the keyring
 #     packages' scriptlets did when the target was pacstrapped directly.
 # -M: the builder's mirrorlist means nothing to an installed system; the
 #     installer writes the target's own.

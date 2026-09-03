@@ -3,7 +3,7 @@
 # fails before the disk is touched), the mount-table capture and its replay
 # options, and the destructive subvolume dance — received at the top level,
 # snapshotted, swapped in for @ with the layout unmounted, layout replayed.
-# Successor to the Python orchestrator's test_root_image.py.
+# Successor to the former Python orchestrator's root-image tests.
 # shellcheck disable=SC1091
 source "$(dirname -- "${BASH_SOURCE[0]}")/orchestrator-harness.sh"
 

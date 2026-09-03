@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # The root image: verify the build-time btrfs send stream on the boot medium,
 # btrfs receive it into the target filesystem, and make it the @ subvolume.
-# Ported from the Python orchestrator's root-image half of phases_impl.py.
+# Ported from the root-image half of the former Python orchestrator.
 #
 # archinstall-bash (or the configurator, for protected installs) has created
 # and mounted the subvolume layout by the time the unpack runs: @ at the
