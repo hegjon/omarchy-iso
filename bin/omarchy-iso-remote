@@ -164,11 +164,11 @@ iso_authorized_keys() {
 }
 
 cmd_check_key() {
-  local iso="${1:-}" keys
+  local iso="${1:-}" keys rc
   [[ -f $iso ]] || { echo "check-key: no such ISO: $iso" >&2; exit 1; }
-  case "$(iso_authorized_keys "$iso" >/dev/null 2>&1; echo $?)" in
+  keys=$(iso_authorized_keys "$iso" 2>/dev/null); rc=$?
+  case $rc in
     0)
-      keys=$(iso_authorized_keys "$iso")
       echo "authorized_keys baked into $iso:"
       ssh-keygen -lf /dev/stdin <<<"$keys" 2>/dev/null || printf '%s\n' "$keys"
       ;;
@@ -384,8 +384,8 @@ cmd_write() {
   # bytes the device accepted, not bytes fed into the pipe, and needs no
   # extra tool on either end.
   # shellcheck disable=SC2029
-  cat "$iso" | ssh "${SSH_OPTS[@]}" "root@$HOST" \
-    "dd of=$usb bs=4M oflag=direct conv=fsync status=progress" ||
+  ssh "${SSH_OPTS[@]}" "root@$HOST" \
+    "dd of=$usb bs=4M oflag=direct conv=fsync status=progress" <"$iso" ||
     { echo "write failed" >&2; exit 1; }
 
   if [[ -n $medium && $medium == "$usb" ]]; then

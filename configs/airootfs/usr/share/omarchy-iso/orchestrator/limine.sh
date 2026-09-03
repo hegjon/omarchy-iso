@@ -316,7 +316,7 @@ validate_boot() {
   assert_boot_hooks_restored
 
   local esp_mount limine_conf
-  esp_mount="$CTX_TARGET/$(boot_intent esp_mount | sed 's|^/||')"
+  esp_mount="$CTX_TARGET/$(boot_intent_rel esp_mount)"
   limine_conf="$esp_mount/limine.conf"
   [[ -e $limine_conf ]] || fail "$limine_conf missing"
   grep -q Omarchy "$limine_conf" || fail "$limine_conf has no Omarchy entry"
@@ -336,7 +336,7 @@ validate_boot() {
 
   if arch_has_uefi; then
     local limine_binary
-    limine_binary="$esp_mount/$(boot_intent esp_path | sed 's|^/||')/$(boot_intent efi_binary)"
+    limine_binary="$esp_mount/$(boot_intent_rel esp_path)/$(boot_intent efi_binary)"
     [[ -s $limine_binary ]] || fail "$limine_binary missing or empty"
 
     # Hardware packages (omarchy-hw-intel-ptl, …) can swap the kernel out from
@@ -378,7 +378,7 @@ validate_provisioning_state() {
     for required in "$provisioning_dir/luks-key" "$CTX_TARGET/$PROVISION_KEYFILE"; do
       [[ -e $required ]] || fail "encrypted deferred-provisioning install but $required is missing"
     done
-    grep -q 'cryptkey=rootfs:' "$CTX_TARGET/$(boot_intent esp_mount | sed 's|^/||')/limine.conf" ||
+    grep -q 'cryptkey=rootfs:' "$CTX_TARGET/$(boot_intent_rel esp_mount)/limine.conf" ||
       fail 'encrypted deferred-provisioning install but limine.conf has no cryptkey= for auto-unlock'
   fi
 }

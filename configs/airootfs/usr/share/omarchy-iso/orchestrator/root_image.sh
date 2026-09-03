@@ -180,15 +180,13 @@ root_image_target_mounts() {
   RIMG_MOUNTS_JSON=$(jq -c '[.filesystems[] | recurse(.children[]?) | {target, source, fstype, options}]' <<<"$json")
 
   local root_target root_fstype root_options
-  root_target=$(jq -r '.[0].target // empty' <<<"$RIMG_MOUNTS_JSON")
+  { read -r root_target; read -r root_fstype; read -r root_options; read -r RIMG_DEVICE; } < <(
+    jq -r '.[0] | (.target // ""), (.fstype // ""), (.options // ""), (.source // "")' <<<"$RIMG_MOUNTS_JSON")
   [[ $root_target == "$CTX_TARGET" ]] || fail "$CTX_TARGET is not a mountpoint"
-  root_fstype=$(jq -r '.[0].fstype // empty' <<<"$RIMG_MOUNTS_JSON")
   [[ $root_fstype == btrfs ]] || fail "root image install needs a btrfs target root, got ${root_fstype:-unknown}"
-  root_options=$(jq -r '.[0].options // empty' <<<"$RIMG_MOUNTS_JSON")
   list_contains "${root_options//,/ }" 'subvol=/@' || list_contains "${root_options//,/ }" 'subvol=@' ||
     fail "root image install needs the target root on the @ subvolume, got $root_options"
 
-  RIMG_DEVICE=$(jq -r '.[0].source // empty' <<<"$RIMG_MOUNTS_JSON")
   RIMG_DEVICE=${RIMG_DEVICE%%\[*}
   [[ -n $RIMG_DEVICE ]] || fail "could not determine the btrfs device backing $CTX_TARGET"
 }
@@ -206,17 +204,12 @@ remount_option_string() {
 }
 
 replay_target_mounts() {
-  local count i target source fstype options
-  count=$(jq 'length' <<<"$RIMG_MOUNTS_JSON")
-  for ((i = 0; i < count; i++)); do
-    target=$(jq -r ".[$i].target" <<<"$RIMG_MOUNTS_JSON")
-    source=$(jq -r ".[$i].source // empty" <<<"$RIMG_MOUNTS_JSON")
+  local target source fstype options
+  while IFS=$'\t' read -r target source fstype options; do
     source=${source%%\[*}
-    fstype=$(jq -r ".[$i].fstype" <<<"$RIMG_MOUNTS_JSON")
-    options=$(jq -r ".[$i].options // empty" <<<"$RIMG_MOUNTS_JSON")
     mkdir -p "$target"
     mount -t "$fstype" -o "$(remount_option_string "$options")" "$source" "$target"
-  done
+  done < <(jq -r '.[] | [.target, (.source // ""), .fstype, (.options // "")] | @tsv' <<<"$RIMG_MOUNTS_JSON")
 }
 
 # umount -R with a few retries: the dashboard polls the target's pacman db

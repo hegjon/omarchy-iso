@@ -357,6 +357,12 @@ boot_intent() {
   printf '%s' "$value"
 }
 
+# boot_intent with its leading slash stripped, for joining onto $CTX_TARGET.
+boot_intent_rel() {
+  local value=$(boot_intent "$1")
+  printf '%s' "${value#/}"
+}
+
 storage_intent() {
   omarchy_install_get ".storage.$1"
 }
@@ -420,7 +426,7 @@ esp_device() {
   dev=$(storage_intent esp_device)
   if [[ -z $dev ]]; then
     local esp_mp
-    esp_mp="$CTX_TARGET/$(boot_intent esp_mount | sed 's|^/||')"
+    esp_mp="$CTX_TARGET/$(boot_intent_rel esp_mount)"
     dev=$(findmnt -n -o SOURCE "$esp_mp") || fail "could not resolve ESP device at $esp_mp"
     [[ -n $dev ]] || fail "could not resolve ESP device at $esp_mp"
   fi
