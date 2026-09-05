@@ -713,7 +713,8 @@ drive_configurator() {
     capture_console "success-installer-12-free-space-confirm-encrypted"
     if ! $ENCRYPT; then
       press ctrl-c # toggles the confirm to the unencrypted flow
-      wait_for_screen "without encryption" 30
+      # Same highlighted button OCR cannot read as the full-disk confirm below.
+      sleep 2
       capture_console "success-installer-13-free-space-confirm-unencrypted"
     fi
     press ret
