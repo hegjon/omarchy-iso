@@ -7,7 +7,13 @@ for that rename as much as for the creation. This filter merges each such
 create + rename pair into a single create under the final name; everything
 else passes through untouched. The stream stays valid for any btrfs receive.
 
-usage: btrfs-stream-derename [--stats] < in.stream > out.stream
+usage: btrfs-stream-derename [--stats] [--drop-root-chown] [--merge-writes] < in.stream > out.stream
+
+--drop-root-chown  Drop chown commands to root:root for inodes this stream creates,
+                   except below directories the stream marks setgid. Only correct
+                   when the receiver runs as root (it then owns what it creates).
+--merge-writes     Join consecutive plain write commands to the same file at
+                   contiguous offsets into one command (up to 1 MiB).
 """
 import struct, sys, os
 
@@ -15,8 +21,12 @@ MAGIC = b"btrfs-stream\0"
 HDR = struct.Struct("<IHI")          # len (excluding header), cmd, crc
 TLV = struct.Struct("<HH")           # type, len
 C_MKFILE, C_MKDIR, C_MKNOD, C_MKFIFO, C_MKSOCK, C_SYMLINK, C_RENAME, C_END = 3, 4, 5, 6, 7, 8, 9, 21
+C_SNAPSHOT, C_WRITE, C_CHMOD, C_CHOWN = 2, 15, 18, 19
 CREATES = {C_MKFILE, C_MKDIR, C_MKNOD, C_MKFIFO, C_MKSOCK, C_SYMLINK}
+A_MODE, A_UID, A_GID, A_FILE_OFFSET = 5, 6, 7, 18
 A_PATH, A_PATH_TO, A_DATA = 15, 16, 19
+S_ISGID = 0o2000
+MERGE_MAX = 1 << 20
 
 # CRC-32C (Castagnoli), as btrfs computes it: seed 0, no final inversion.
 _TABLE = []
@@ -56,6 +66,8 @@ def tlvs(payload, version):
 
 def main():
     stats = "--stats" in sys.argv[1:]
+    drop_chown = "--drop-root-chown" in sys.argv[1:]
+    merge_writes = "--merge-writes" in sys.argv[1:]
     inp, out = sys.stdin.buffer, sys.stdout.buffer
     hdr = read_exact(inp, len(MAGIC) + 4)
     if hdr is None or bytes(hdr[:len(MAGIC)]) != MAGIC:
@@ -65,6 +77,27 @@ def main():
     pending = None            # (header bytes, payload, path_value_off, path_len)
     n_in = n_out = merged = 0
     saved = 0
+    dropped_chown = merged_writes = 0
+    setgid_dirs = set()       # paths given a setgid chmod; files below keep their chown
+    incremental = False       # a snapshot stream chowns inodes it did not create: keep all
+    wpend = None              # merge-writes: (path, start_off, next_off, [data chunks], template payload prefix)
+
+    def emit(hb, pb):
+        nonlocal n_out
+        out.write(hb); out.write(pb); n_out += 1
+
+    def flush_writes():
+        nonlocal wpend, merged_writes
+        if wpend is None:
+            return
+        path, start, _, chunks, ncmds = wpend
+        data = b"".join(chunks)
+        # PATH tlv, FILE_OFFSET tlv (u64), DATA tlv (v2: no length)
+        pl = TLV.pack(A_PATH, len(path)) + path + TLV.pack(A_FILE_OFFSET, 8) + struct.pack("<Q", start) + struct.pack("<H", A_DATA) + data
+        hb = bytearray(HDR.pack(len(pl), C_WRITE, 0)); struct.pack_into("<I", hb, 6, crc32c(hb + pl))
+        emit(hb, pl)
+        merged_writes += ncmds - 1
+        wpend = None
     while True:
         h = read_exact(inp, HDR.size)
         if h is None:
@@ -72,6 +105,41 @@ def main():
         ln, cmd, crc = HDR.unpack(h)
         payload = read_exact(inp, ln) if ln else bytearray()
         n_in += 1
+        if cmd == C_SNAPSHOT:
+            incremental = True
+        if merge_writes and cmd == C_WRITE and version >= 2 and pending is None:
+            path = off = data = None
+            for typ, o, tl in tlvs(payload, version):
+                if typ == A_PATH: path = bytes(payload[o:o + tl])
+                elif typ == A_FILE_OFFSET: off = struct.unpack_from("<Q", payload, o)[0]
+                elif typ == A_DATA: data = bytes(payload[o:o + tl])
+            if path is not None and off is not None and data is not None:
+                if wpend is not None and wpend[0] == path and wpend[2] == off and (wpend[2] - wpend[1]) + len(data) <= MERGE_MAX:
+                    wpend[3].append(data); wpend = (path, wpend[1], off + len(data), wpend[3], wpend[4] + 1)
+                    continue
+                flush_writes()
+                wpend = (path, off, off + len(data), [data], 1)
+                continue
+        flush_writes()
+        if drop_chown and not incremental and cmd == C_CHOWN:
+            path = uid = gid = None
+            for typ, o, tl in tlvs(payload, version):
+                if typ == A_PATH: path = bytes(payload[o:o + tl])
+                elif typ == A_UID: uid = struct.unpack_from("<Q", payload, o)[0]
+                elif typ == A_GID: gid = struct.unpack_from("<Q", payload, o)[0]
+            if uid == 0 and gid == 0 and path is not None:
+                parent = path.rsplit(b"/", 1)[0] if b"/" in path else b""
+                if parent not in setgid_dirs:
+                    dropped_chown += 1
+                    saved += HDR.size + ln
+                    continue
+        if drop_chown and cmd == C_CHMOD:
+            path = mode = None
+            for typ, o, tl in tlvs(payload, version):
+                if typ == A_PATH: path = bytes(payload[o:o + tl])
+                elif typ == A_MODE: mode = struct.unpack_from("<Q", payload, o)[0]
+            if mode is not None and mode & S_ISGID and path is not None:
+                setgid_dirs.add(path)
         if pending is not None and cmd == C_RENAME:
             path = to = None
             for typ, off, tl in tlvs(payload, version):
@@ -105,11 +173,13 @@ def main():
                 out.write(h); out.write(payload); n_out += 1
             continue
         out.write(h); out.write(payload); n_out += 1
+    flush_writes()
     if pending is not None:
         out.write(pending[0]); out.write(pending[1]); n_out += 1
     out.flush()
     if stats:
-        print(f"btrfs-stream-derename: {n_in} commands in, {n_out} out, {merged} create+rename pairs merged, {saved} bytes saved", file=sys.stderr)
+        print(f"btrfs-stream-derename: {n_in} commands in, {n_out} out, {merged} create+rename pairs merged, "
+              f"{dropped_chown} root chowns dropped, {merged_writes} writes merged away, {saved} bytes saved", file=sys.stderr)
 
 if __name__ == "__main__":
     main()

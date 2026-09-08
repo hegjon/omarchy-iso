@@ -210,8 +210,11 @@ mkdir -p "$(dirname "$output")"
 # btrfs send creates every new inode under a temporary name and renames it in
 # the next command; the receiver pays for that rename as much as for the
 # creation (38% of its kernel time on this image). The filter merges each
-# such pair into one create under the final name; the stream stays a valid
-# send stream for any btrfs receive, ~10 MB smaller and a third faster to
-# receive (see builder/btrfs-stream-derename).
-btrfs send -q --compressed-data "$root" | python3 /builder/btrfs-stream-derename --stats | "${STREAM_COMPRESS[@]}" -o "$output"
+# such pair into one create under the final name, and drops the chown to
+# root:root that follows every inode: the installer receives as root, so it
+# owns what it creates already (files below setgid directories keep theirs).
+# The stream stays a valid send stream for any btrfs receive, a third fewer
+# commands, ~34 MB smaller and ~40% faster to receive
+# (see builder/btrfs-stream-derename).
+btrfs send -q --compressed-data "$root" | python3 /builder/btrfs-stream-derename --stats --drop-root-chown | "${STREAM_COMPRESS[@]}" -o "$output"
 echo "Root image stream: $(du -h "$output" | cut -f1) at $output"
