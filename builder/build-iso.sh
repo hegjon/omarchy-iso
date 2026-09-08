@@ -30,7 +30,7 @@ pacman --noconfirm -Sy archlinux-keyring
 # so this container can be months behind the mirror it installs from. A plain
 # -Sy install is then a partial upgrade — new packages linked against a glibc
 # the container doesn't have yet.
-pacman --noconfirm -Syu archiso git sudo base-devel jq grub imagemagick neovim nodejs npm tree-sitter-cli btrfs-progs
+pacman --noconfirm -Syu archiso git sudo base-devel jq grub imagemagick neovim nodejs npm tree-sitter-cli btrfs-progs python
 
 # Pre-import the omarchy signing key (so pacman trusts our [omarchy] repo
 # during the build without keyserver lookups).

@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+"""Rewrite a btrfs send stream so new inodes are created under their final name.
+
+btrfs send creates every new inode under a temporary name (o<ino>-<gen>-<idx>)
+and renames it to its real name in the very next command. The receiver pays
+for that rename as much as for the creation. This filter merges each such
+create + rename pair into a single create under the final name; everything
+else passes through untouched. The stream stays valid for any btrfs receive.
+
+usage: btrfs-stream-derename [--stats] < in.stream > out.stream
+"""
+import struct, sys, os
+
+MAGIC = b"btrfs-stream\0"
+HDR = struct.Struct("<IHI")          # len (excluding header), cmd, crc
+TLV = struct.Struct("<HH")           # type, len
+C_MKFILE, C_MKDIR, C_MKNOD, C_MKFIFO, C_MKSOCK, C_SYMLINK, C_RENAME, C_END = 3, 4, 5, 6, 7, 8, 9, 21
+CREATES = {C_MKFILE, C_MKDIR, C_MKNOD, C_MKFIFO, C_MKSOCK, C_SYMLINK}
+A_PATH, A_PATH_TO, A_DATA = 15, 16, 19
+
+# CRC-32C (Castagnoli), as btrfs computes it: seed 0, no final inversion.
+_TABLE = []
+for _i in range(256):
+    _c = _i
+    for _ in range(8):
+        _c = (_c >> 1) ^ 0x82F63B78 if _c & 1 else _c >> 1
+    _TABLE.append(_c)
+
+def crc32c(data, crc=0):
+    t = _TABLE
+    for b in data:
+        crc = t[(crc ^ b) & 0xFF] ^ (crc >> 8)
+    return crc
+
+def read_exact(f, n):
+    buf = bytearray(n); mv = memoryview(buf); pos = 0
+    while pos < n:
+        got = f.readinto(mv[pos:])
+        if not got:
+            if pos == 0: return None
+            raise SystemExit(f"btrfs-stream-derename: truncated stream ({pos} of {n} bytes)")
+        pos += got
+    return buf
+
+def tlvs(payload, version):
+    """Yield (type, value_offset, value_len) for a command payload."""
+    pos, n = 0, len(payload)
+    while pos < n:
+        typ = struct.unpack_from("<H", payload, pos)[0]; pos += 2
+        if version >= 2 and typ == A_DATA:
+            ln = n - pos
+        else:
+            ln = struct.unpack_from("<H", payload, pos)[0]; pos += 2
+        yield typ, pos, ln
+        pos += ln
+
+def main():
+    stats = "--stats" in sys.argv[1:]
+    inp, out = sys.stdin.buffer, sys.stdout.buffer
+    hdr = read_exact(inp, len(MAGIC) + 4)
+    if hdr is None or bytes(hdr[:len(MAGIC)]) != MAGIC:
+        raise SystemExit("btrfs-stream-derename: not a btrfs send stream")
+    version = struct.unpack_from("<I", hdr, len(MAGIC))[0]
+    out.write(hdr)
+    pending = None            # (header bytes, payload, path_value_off, path_len)
+    n_in = n_out = merged = 0
+    saved = 0
+    while True:
+        h = read_exact(inp, HDR.size)
+        if h is None:
+            break
+        ln, cmd, crc = HDR.unpack(h)
+        payload = read_exact(inp, ln) if ln else bytearray()
+        n_in += 1
+        if pending is not None and cmd == C_RENAME:
+            path = to = None
+            for typ, off, tl in tlvs(payload, version):
+                if typ == A_PATH: path = payload[off:off + tl]
+                elif typ == A_PATH_TO: to = payload[off:off + tl]
+            phdr, ppay, poff, plen = pending
+            if path is not None and to is not None and path == ppay[poff:poff + plen]:
+                # Create under the final name: swap the PATH value, fix length and crc.
+                new = ppay[:poff - 4] + TLV.pack(A_PATH, len(to)) + to + ppay[poff + plen:]
+                nh = bytearray(HDR.pack(len(new), HDR.unpack(phdr)[1], 0))
+                struct.pack_into("<I", nh, 6, crc32c(nh + new))
+                out.write(nh); out.write(new); n_out += 1; merged += 1
+                saved += HDR.size + ln + (len(ppay) - len(new))
+                pending = None
+                continue
+            out.write(phdr); out.write(ppay); n_out += 1
+            pending = None
+        elif pending is not None:
+            out.write(pending[0]); out.write(pending[1]); n_out += 1
+            pending = None
+        if cmd in CREATES:
+            # Verify the crc convention once on real data, then hold the create back.
+            check = bytearray(h); struct.pack_into("<I", check, 6, 0)
+            if crc32c(check + payload) != crc:
+                raise SystemExit("btrfs-stream-derename: crc mismatch in stream (or unsupported crc convention)")
+            for typ, off, tl in tlvs(payload, version):
+                if typ == A_PATH:
+                    pending = (bytes(h), payload, off, tl)
+                    break
+            else:
+                out.write(h); out.write(payload); n_out += 1
+            continue
+        out.write(h); out.write(payload); n_out += 1
+    if pending is not None:
+        out.write(pending[0]); out.write(pending[1]); n_out += 1
+    out.flush()
+    if stats:
+        print(f"btrfs-stream-derename: {n_in} commands in, {n_out} out, {merged} create+rename pairs merged, {saved} bytes saved", file=sys.stderr)
+
+if __name__ == "__main__":
+    main()
