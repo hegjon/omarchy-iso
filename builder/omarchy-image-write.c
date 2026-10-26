@@ -13,12 +13,25 @@
  * O_DIRECT. The seek table sits in a skippable frame, so the file stays an
  * ordinary .zst: `zstd -d` reads it unchanged.
  *
- *   omarchy-image-write pack  RAW IMAGE.zst
+ *   omarchy-image-write pack  RAW IMAGE.zst [FREEMAP]
  *   omarchy-image-write write IMAGE.zst TARGET [THREADS]
  *
- * write leaves frames that decode to all zeros unwritten, as dd conv=sparse
- * does: the target must not care what those blocks hold (a freshly formatted
- * partition, where btrfs references none of them).
+ * FREEMAP (root-image-free-map) lists the device ranges the filesystem in RAW
+ * does not use, as "offset length" lines. pack zeroes those blocks before
+ * compressing, so free space costs nothing in the image, and records one bit
+ * per 4 KiB block in a skippable frame before the seek table (magic
+ * 0x184D2A5F, "OMFREE01", block size, block count, bitmap). write then skips
+ * exactly the frames and the runs inside frames that the bitmap marks free,
+ * and writes everything else, zeros included: a block the filesystem
+ * references can hold zeros (btrfs stores some uncompressed), and on an
+ * encrypted target an unwritten sector reads back as garbage, never as
+ * zeros. The target must not care what the unwritten blocks hold, which a
+ * freshly formatted partition does not.
+ *
+ * Without a map, write leaves frames that decode to all zeros unwritten, as
+ * dd conv=sparse does, and writes every other frame whole. That is a guess
+ * from content and is only safe while no 256 KiB-aligned run of referenced
+ * zeros exists in the image; images built with a map carry no such risk.
  *
  * Exit status of write: 0 written and synced; 2 the image is not one this
  * tool writes (no valid seek table, or bad arguments), nothing written, so the
@@ -48,6 +61,7 @@
 #define MAX_FRAME	(16 << 20)	/* write: largest frame accepted */
 #define ALIGN		4096		/* O_DIRECT: sizes and offsets */
 #define LEVEL		3
+#define SKIP_RUN	(16 << 10)	/* write: free run left unwritten, at least */
 #define MAX_THREADS	64
 
 /* The seekable format: a skippable frame of 8-byte entries and a footer. */
@@ -56,6 +70,11 @@
 #define SKIP_HEADER		8		/* magic, frame size */
 #define FOOTER			9		/* frames, descriptor, magic */
 #define ENTRY			8		/* compressed, decompressed size */
+
+/* The free map: a skippable frame right before the seek table. */
+#define FREE_MAP_MAGIC		0x184D2A5Fu
+#define FREE_MAP_ID		"OMFREE01"
+#define FREE_MAP_HEADER		16		/* id, block size, block count */
 
 enum { FAILED = 1, REFUSED = 2 };
 
@@ -73,7 +92,12 @@ static size_t nframes, max_dsize, cached_frames;
 static int target_fd;
 static uint8_t *zero_frame;
 static size_t zero_frame_size;
-static atomic_size_t next_frame, bytes_written, zero_frames;
+static atomic_size_t next_frame, bytes_written, zero_frames, writes, holes;
+/* One bit per ALIGN-sized block of the raw image, set when the filesystem
+ * does not use the block. pack builds it from FREEMAP; write reads it from
+ * the image. NULL: no map, content decides (see the header). */
+static uint8_t *free_bits;
+static size_t free_nblocks;
 static atomic_int failed;
 /* Thread-nanoseconds, summed over the workers: decoding (including the page
  * faults on the image), in pwrite, and checking for zeros (the compressed
@@ -153,38 +177,117 @@ static int all_zero(const uint8_t *p, size_t n)
 	return p[0] == 0 && memcmp(p, p + 1, n - 1) == 0;
 }
 
-static int pack(const char *raw, const char *out)
+static int block_free(size_t block)
+{
+	return free_bits[block >> 3] >> (block & 7) & 1;
+}
+
+/* Blocks [first, first + n) all free? */
+static int blocks_free(size_t first, size_t n)
+{
+	while (n--)
+		if (!block_free(first++))
+			return 0;
+	return 1;
+}
+
+/* pack: FREEMAP's "offset length" lines into free_bits. */
+static void read_free_map(const char *path, size_t size)
+{
+	FILE *f = fopen(path, "re");
+	unsigned long long off, len;
+	size_t marked = 0, b;
+	int fields;
+
+	if (!f)
+		die(FAILED, "%s: %s", path, strerror(errno));
+	free_nblocks = size / ALIGN;
+	free_bits = calloc((free_nblocks + 7) / 8, 1);
+	if (!free_bits)
+		die(FAILED, "out of memory");
+	while ((fields = fscanf(f, "%llu %llu", &off, &len)) == 2) {
+		if (off % ALIGN || len % ALIGN || off > size || len > size - off)
+			die(FAILED, "%s: range %llu+%llu is not %d-byte aligned inside the image",
+			    path, off, len, ALIGN);
+		for (b = off / ALIGN; b < (off + len) / ALIGN; b++) {
+			marked += !block_free(b);
+			free_bits[b >> 3] |= 1 << (b & 7);
+		}
+	}
+	if (fields != EOF || ferror(f))
+		die(FAILED, "%s: not \"offset length\" lines", path);
+	fclose(f);
+	fprintf(stderr, "omarchy-image-write: free map: %zu of %zu blocks free (%.2f GiB)\n",
+		marked, free_nblocks, marked * (double)ALIGN / 1073741824.0);
+}
+
+static int pack(const char *raw, const char *out, const char *freemap)
 {
 	size_t size, n, i, tsize, zeros = 0, packed = 0, bound = ZSTD_compressBound(FRAME_SIZE);
+	size_t free_frames = 0, masked = 0;
 	const uint8_t *in = map_file(raw, &size, FAILED);
 	ZSTD_CCtx *cctx = pack_cctx();
-	uint8_t *buf = malloc(bound), *table;
+	uint8_t *buf = malloc(bound), *work = malloc(FRAME_SIZE), *table;
 	FILE *f;
 
 	if (size % ALIGN)
 		die(FAILED, "%s: %zu bytes, not a multiple of %d", raw, size, ALIGN);
+	if (freemap)
+		read_free_map(freemap, size);
 	n = (size + FRAME_SIZE - 1) / FRAME_SIZE;
 	if (n > (UINT32_MAX - FOOTER) / ENTRY)
 		die(FAILED, "%s: too big for a seek table", raw);
 	tsize = SKIP_HEADER + n * ENTRY + FOOTER;
 	table = malloc(tsize);
 	f = fopen(out, "wbe");
-	if (!f || !buf || !table)
+	if (!f || !buf || !work || !table)
 		die(FAILED, "%s: %s", out, strerror(errno));
 
 	for (i = 0; i < n; i++) {
 		size_t pos = i * FRAME_SIZE;
 		size_t len = size - pos < FRAME_SIZE ? size - pos : FRAME_SIZE;
-		size_t c = ZSTD_compress2(cctx, buf, bound, in + pos, len);
+		const uint8_t *src = in + pos;
+		size_t c;
 
+		if (free_bits) {
+			/* Free blocks go into the image as zeros, whatever the
+			 * build left in them. */
+			size_t b, first = pos / ALIGN, blocks = len / ALIGN, nfree = 0;
+
+			memcpy(work, in + pos, len);
+			for (b = 0; b < blocks; b++)
+				if (block_free(first + b)) {
+					memset(work + b * ALIGN, 0, ALIGN);
+					nfree++;
+				}
+			masked += nfree * ALIGN;
+			free_frames += nfree == blocks;
+			src = work;
+		}
+		c = ZSTD_compress2(cctx, buf, bound, src, len);
 		if (ZSTD_isError(c))
 			die(FAILED, "frame %zu: %s", i, ZSTD_getErrorName(c));
-		zeros += all_zero(in + pos, len);
+		zeros += all_zero(src, len);
 		packed += c;
 		if (fwrite(buf, 1, c, f) != c)
 			die(FAILED, "%s: %s", out, strerror(errno));
 		put_le32(table + SKIP_HEADER + i * ENTRY, c);
 		put_le32(table + SKIP_HEADER + i * ENTRY + 4, len);
+	}
+
+	if (free_bits) {
+		size_t bytes = (free_nblocks + 7) / 8;
+		uint8_t header[SKIP_HEADER + FREE_MAP_HEADER];
+
+		put_le32(header, FREE_MAP_MAGIC);
+		put_le32(header + 4, FREE_MAP_HEADER + bytes);
+		memcpy(header + SKIP_HEADER, FREE_MAP_ID, 8);
+		put_le32(header + SKIP_HEADER + 8, ALIGN);
+		put_le32(header + SKIP_HEADER + 12, free_nblocks);
+		if (fwrite(header, 1, sizeof header, f) != sizeof header ||
+		    fwrite(free_bits, 1, bytes, f) != bytes)
+			die(FAILED, "%s: %s", out, strerror(errno));
+		packed += sizeof header + bytes;
 	}
 
 	put_le32(table, SEEK_TABLE_MAGIC);
@@ -196,9 +299,13 @@ static int pack(const char *raw, const char *out)
 		die(FAILED, "%s: %s", out, strerror(errno));
 	fprintf(stderr, "omarchy-image-write: packed %.2f GiB as %zu frames (%zu zero) into %.2f GiB\n",
 		size / 1073741824.0, n, zeros, (packed + tsize) / 1073741824.0);
+	if (free_bits)
+		fprintf(stderr, "omarchy-image-write: free map: %zu frames entirely free, %.0f MiB zeroed in the rest\n",
+			free_frames, (masked - free_frames * (double)FRAME_SIZE) / 1048576.0);
 
 	ZSTD_freeCCtx(cctx);
 	free(buf);
+	free(work);
 	free(table);
 	munmap((void *)in, size);
 	return 0;
@@ -244,8 +351,22 @@ static off_t read_seek_table(size_t size)
 		pos += c;
 		dst += d;
 	}
-	if (pos != table)
-		die(REFUSED, "seek table: frames cover %zu of the %zu bytes before it", pos, table);
+	if (pos != table) {
+		/* What the frames leave before the table must be the free map. */
+		size_t blocks = (size_t)dst / ALIGN, bytes = (blocks + 7) / 8;
+
+		if (table - pos < SKIP_HEADER + FREE_MAP_HEADER ||
+		    get_le32(image + pos) != FREE_MAP_MAGIC ||
+		    get_le32(image + pos + 4) != table - pos - SKIP_HEADER ||
+		    memcmp(image + pos + SKIP_HEADER, FREE_MAP_ID, 8) != 0)
+			die(REFUSED, "seek table: frames cover %zu of the %zu bytes before it", pos, table);
+		if (get_le32(image + pos + SKIP_HEADER + 8) != ALIGN ||
+		    get_le32(image + pos + SKIP_HEADER + 12) != blocks ||
+		    table - pos - SKIP_HEADER - FREE_MAP_HEADER != bytes)
+			die(REFUSED, "free map: not one bit per %d-byte block of the image", ALIGN);
+		free_bits = (uint8_t *)image + pos + SKIP_HEADER + FREE_MAP_HEADER;
+		free_nblocks = blocks;
+	}
 	return dst;
 }
 
@@ -316,6 +437,44 @@ static void fail(const char *fmt, ...)
 	fputc('\n', stderr);
 }
 
+/*
+ * Write the blocks of a decoded frame the map marks used. A run of free
+ * blocks of SKIP_RUN or more is left unwritten; a shorter one goes out with
+ * the data around it, one request instead of three. Adds the time spent in
+ * pwrite to *write_ns.
+ */
+static int write_used_runs(const uint8_t *buf, size_t n, off_t dst, uint64_t *write_ns)
+{
+	size_t first = dst / ALIGN, start = 0, pos = 0;
+	uint64_t t;
+	int err;
+
+	while (pos < n) {
+		size_t hole = pos, end;
+
+		while (hole < n && !block_free(first + hole / ALIGN))
+			hole += ALIGN;
+		end = hole;
+		while (end < n && block_free(first + end / ALIGN))
+			end += ALIGN;
+		if (end - hole >= SKIP_RUN || end == n) {
+			if (hole > start) {
+				t = now_ns();
+				err = pwrite_all(target_fd, buf + start, hole - start, dst + start);
+				*write_ns += now_ns() - t;
+				if (err)
+					return err;
+				atomic_fetch_add(&writes, 1);
+				atomic_fetch_add(&bytes_written, hole - start);
+			}
+			atomic_fetch_add(&holes, end - hole);
+			start = end;
+		}
+		pos = end;
+	}
+	return 0;
+}
+
 static void *worker(void *arg)
 {
 	ZSTD_DCtx *dctx = ZSTD_createDCtx();
@@ -338,7 +497,8 @@ static void *worker(void *arg)
 		k = order[k];
 		f = &frames[k];
 		t0 = now_ns();
-		if (is_zero_frame(f)) {
+		if (free_bits ? blocks_free(f->dst / ALIGN, f->dsize / ALIGN) : is_zero_frame(f)) {
+			/* Entirely free (the map), or zstd's encoding of zeros (no map). */
 			atomic_fetch_add(&zero_frames, 1);
 			skip += now_ns() - t0;
 			continue;
@@ -351,20 +511,32 @@ static void *worker(void *arg)
 			     ZSTD_getErrorName(n) : "decoded to the wrong size");
 			break;
 		}
-		if (all_zero(buf, n)) {
-			atomic_fetch_add(&zero_frames, 1);
-			skip += now_ns() - t1;
-			continue;
+		if (free_bits) {
+			/* The map says which blocks matter; the scan for runs counts
+			 * as skipping, the writes are timed inside. */
+			t0 = 0;
+			err = write_used_runs(buf, n, f->dst, &t0);
+			write += t0;
+			skip += now_ns() - t1 - t0;
+		} else {
+			if (all_zero(buf, n)) {
+				atomic_fetch_add(&zero_frames, 1);
+				skip += now_ns() - t1;
+				continue;
+			}
+			t0 = now_ns();
+			skip += t0 - t1;
+			err = pwrite_all(target_fd, buf, n, f->dst);
+			write += now_ns() - t0;
+			if (!err) {
+				atomic_fetch_add(&writes, 1);
+				atomic_fetch_add(&bytes_written, n);
+			}
 		}
-		t0 = now_ns();
-		skip += t0 - t1;
-		err = pwrite_all(target_fd, buf, n, f->dst);
-		write += now_ns() - t0;
 		if (err) {
-			fail("write at byte %lld: %s", (long long)f->dst, strerror(-err));
+			fail("write in the frame at byte %lld: %s", (long long)f->dst, strerror(-err));
 			break;
 		}
-		atomic_fetch_add(&bytes_written, n);
 	}
 out:
 	atomic_fetch_add(&decode_ns, decode);
@@ -491,9 +663,13 @@ static int write_image(const char *path, const char *target, int threads)
 		die(FAILED, "%s: %s", target, strerror(errno));
 	t3 = now_ns();
 
-	fprintf(stderr, "omarchy-image-write: wrote %.2f of %.2f GiB (%zu frames, %zu zero, %zu cached, %d threads) in %.2f s\n",
+	fprintf(stderr, "omarchy-image-write: wrote %.2f of %.2f GiB (%zu frames, %zu %s, %zu cached, %d threads) in %.2f s",
 		atomic_load(&bytes_written) / 1073741824.0, total / 1073741824.0, nframes,
-		atomic_load(&zero_frames), cached_frames, threads, (t3 - t0) / 1e9);
+		atomic_load(&zero_frames), free_bits ? "free" : "zero", cached_frames, threads, (t3 - t0) / 1e9);
+	if (free_bits)
+		fprintf(stderr, "; %zu writes, %.1f MiB of free space inside frames skipped",
+			atomic_load(&writes), atomic_load(&holes) / 1048576.0);
+	fputc('\n', stderr);
 	/*
 	 * Where the time went: before the first frame, the frames, the final
 	 * flush; and the workers' thread-seconds, so a slow install says whether
@@ -512,8 +688,8 @@ int main(int argc, char **argv)
 {
 	signal(SIGBUS, on_sigbus);
 
-	if (argc == 4 && !strcmp(argv[1], "pack"))
-		return pack(argv[2], argv[3]);
+	if ((argc == 4 || argc == 5) && !strcmp(argv[1], "pack"))
+		return pack(argv[2], argv[3], argc == 5 ? argv[4] : NULL);
 	if ((argc == 4 || argc == 5) && !strcmp(argv[1], "write")) {
 		long cpus = sysconf(_SC_NPROCESSORS_ONLN);
 		int threads = cpus < 1 ? 1 : cpus > 16 ? 16 : cpus;
@@ -530,6 +706,6 @@ int main(int argc, char **argv)
 			die(REFUSED, "threads: 1 to %d", MAX_THREADS);
 		return write_image(argv[2], argv[3], threads);
 	}
-	die(REFUSED, "usage: omarchy-image-write pack RAW IMAGE.zst\n"
+	die(REFUSED, "usage: omarchy-image-write pack RAW IMAGE.zst [FREEMAP]\n"
 	    "       omarchy-image-write write IMAGE.zst TARGET [THREADS]");
 }

@@ -431,16 +431,23 @@ if ! btrfs filesystem resize "${shrink_mb}M" "$mnt"; then
   image_size=${OMARCHY_IMAGE_SIZE:-24G}
   shrink_mb=$(( ${image_size%G} * 1024 ))
 fi
-# Free space inside the image still holds what the build and the shrink's
-# relocations left there. Discard it: the loop device punches holes in the
-# backing file, holes read back as zeros, and pack compresses them to nothing
-# (or skips a whole zero frame). Measured: 2 GiB trimmed, 83.6 MB (2.0%) off
-# the packed image, 63 more zero frames.
-fstrim -v "$mnt" || echo "WARNING: fstrim failed; free space ships as whatever it holds"
 sync
 umount "$mnt"
 losetup -d "$loop"
 truncate -s "${shrink_mb}M" "$backing"
+
+# What the filesystem does not use, from its own chunk and extent trees: the
+# shrink's old copies, the build's leftovers, and the free quarter of every
+# data block group that pacstrap leaves interleaved with the data. pack
+# zeroes those blocks (so they compress to nothing) and records them in the
+# image, and the installer leaves exactly them unwritten, whole frames and
+# runs inside frames alike. Nothing is guessed from content: btrfs
+# references some blocks that hold zeros, and an encrypted target reads an
+# unwritten sector back as garbage, so a skipped block had better be one
+# the filesystem never reads. Measured: 4.41 GiB written instead of 4.65.
+freemap="$backing.free"
+/builder/root-image-free-map "$backing" >"$freemap"
+echo "Free map: $(wc -l <"$freemap") ranges, $(awk '{ s += $2 } END { printf "%.2f GiB", s / 2^30 }' "$freemap") unused"
 
 # Compress the image for the ISO. zstd collapses the unused space; the data
 # is already compressed inside btrfs and shrinks little. Measured: 6.3 GB
@@ -451,5 +458,6 @@ truncate -s "${shrink_mb}M" "$backing"
 # 0.9 s instead of 2.5 s through zstdcat | dd on a 990 PRO. Framing costs
 # 1.3% (55 MB). It is still one valid .zst; zstd -d reads it unchanged.
 echo "Packing the root image as 256 KiB zstd frames"
-omarchy-image-write pack "$backing" "$output"
+omarchy-image-write pack "$backing" "$output" "$freemap"
+rm -f "$freemap"
 echo "Root image: $(du -h "$output" | cut -f1) at $output (from ${shrink_mb}M apparent input)"

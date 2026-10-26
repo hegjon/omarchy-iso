@@ -1,0 +1,91 @@
+#!/bin/bash
+#
+# root-image-free-map: the device byte ranges a btrfs image does not use, as
+# "offset length" lines on stdout, for `omarchy-image-write pack` to zero and
+# to let the installer leave unwritten.
+#
+# Read with btrfs-progs from the unmounted image, from the two trees that
+# say what is allocated:
+#   * the chunk tree: every device range no chunk covers is unallocated;
+#   * the extent tree: every EXTENT_ITEM (data, and tree blocks on old
+#     filesystems) and METADATA_ITEM (a tree block of nodesize bytes) is a
+#     used range in logical addresses. What a chunk covers minus those is
+#     its free space, mapped back onto the device through the chunk, onto
+#     every stripe (DUP metadata has two).
+# The free-space tree is not read: it keeps a fragmented block group's free
+# space as bitmaps, which dump-tree does not print. The extent tree has one
+# shape, and it is what the filesystem itself allocates from. The superblock
+# copies are kept.
+#
+# Nothing here is guessed from content: a block a file references stays a
+# used block even when it holds zeros, which matters on an encrypted target,
+# where an unwritten sector reads back as garbage.
+set -euo pipefail
+
+image=${1:?usage: root-image-free-map IMAGE}
+size=$(stat -c %s "$image")
+nodesize=$(btrfs inspect-internal dump-super "$image" | awk '/^nodesize/ { print $2 }')
+[[ $nodesize =~ ^[0-9]+$ ]] || { echo "root-image-free-map: no nodesize in the superblock of $image" >&2; exit 1; }
+
+awk -v size="$size" -v nodesize="$nodesize" '
+# Pass 1: the chunk tree.
+FNR == NR {
+  if (match($0, /CHUNK_ITEM ([0-9]+)\)/, m)) { cur = m[1]; order[++nchunks] = cur; next }
+  if (match($0, /length ([0-9]+) owner [0-9]+ stripe_len [0-9]+ type/, m)) { len[cur] = m[1]; next }
+  if (match($0, /stripe [0-9]+ devid [0-9]+ offset ([0-9]+)/, m)) { stripes[cur] = stripes[cur] " " m[1]; next }
+  next
+}
+# Pass 2: the extent tree, leaf items only. A node prints its children`s
+# first keys in the same form without the "item N" prefix; those are not
+# extents.
+/^\titem [0-9]+ key \([0-9]+ (EXTENT_ITEM|METADATA_ITEM) [0-9]+\)/ {
+  match($0, /key \(([0-9]+) (EXTENT_ITEM|METADATA_ITEM) ([0-9]+)\)/, m)
+  lo = m[1] + 0; n = (m[2] == "METADATA_ITEM") ? nodesize + 0 : m[3] + 0
+  if (nu && lo < ulo[nu]) { print "extent tree dump is not in key order at " lo > "/dev/stderr"; exit 1 }
+  if (nu && lo < ulo[nu] + un[nu]) { print "extents overlap at " lo > "/dev/stderr"; exit 1 }
+  ulo[++nu] = lo; un[nu] = n
+}
+END {
+  # Chunks in logical order (insertion sort: a dozen entries).
+  for (i = 1; i <= nchunks; i++) sorted[i] = order[i] + 0
+  for (i = 2; i <= nchunks; i++) { a = sorted[i]; for (j = i - 1; j >= 1 && sorted[j] > a; j--) sorted[j + 1] = sorted[j]; sorted[j + 1] = a }
+  # Walk extents and chunks together: the gaps inside each chunk are free.
+  k = 1
+  for (i = 1; i <= nchunks; i++) {
+    start = sorted[i]; end = start + len[start]; pos = start
+    while (k <= nu && ulo[k] < end) {
+      if (ulo[k] < start) { print "extent " ulo[k] " in no chunk" > "/dev/stderr"; exit 1 }
+      if (ulo[k] + un[k] > end) { print "extent " ulo[k] " crosses a chunk" > "/dev/stderr"; exit 1 }
+      if (ulo[k] > pos) emit(start, pos, ulo[k] - pos)
+      pos = ulo[k] + un[k]; k++
+    }
+    if (end > pos) emit(start, pos, end - pos)
+  }
+  if (k <= nu) { print "extent " ulo[k] " in no chunk" > "/dev/stderr"; exit 1 }
+  # Unallocated device space: the gaps between stripes, superblocks kept.
+  nc = 0
+  for (i = 1; i <= nchunks; i++) {
+    start = order[i]
+    split(stripes[start], s, " ")
+    for (j in s) if (s[j] != "") { cover[++nc] = s[j] + 0; cend[nc] = s[j] + len[start] }
+  }
+  sb[1] = 65536; sb[2] = 67108864; sb[3] = 274877906944
+  for (q = 1; q <= 3; q++) if (sb[q] < size) { cover[++nc] = sb[q]; cend[nc] = sb[q] + 4096 }
+  for (i = 2; i <= nc; i++) {
+    a = cover[i]; b = cend[i]
+    for (j = i - 1; j >= 1 && cover[j] > a; j--) { cover[j + 1] = cover[j]; cend[j + 1] = cend[j] }
+    cover[j + 1] = a; cend[j + 1] = b
+  }
+  pos = 0
+  for (i = 1; i <= nc; i++) {
+    if (cover[i] > pos) print pos " " (cover[i] - pos)
+    if (cend[i] > pos) pos = cend[i]
+  }
+  if (size > pos) print pos " " (size - pos)
+}
+# A free logical range inside the chunk at start, on every stripe.
+function emit(start, lo, n,    s, j) {
+  split(stripes[start], s, " ")
+  for (j in s) if (s[j] != "") print (s[j] + lo - start) " " n
+}
+' <(btrfs inspect-internal dump-tree -t chunk "$image") <(btrfs inspect-internal dump-tree -t extent "$image")

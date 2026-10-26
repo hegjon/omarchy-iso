@@ -183,6 +183,89 @@ run write "$image" "$work/big"
 cmp -s -n "$raw_size" "$work/big" "$raw" || fail "write to a bigger target puts the image at its start"
 pass "write to a bigger target puts the image at its start"
 
+# --- free map ----------------------------------------------------------------
+
+# What root-image-free-map would say about the synthetic image: frame 4 is
+# free; the second half of frame 2 (random bytes) is free, so pack must zero
+# it; inside frame 7, 64 KiB at 16 KiB and 8 KiB at 200 KiB are free. Frame 5
+# is zeros but NOT free: a block the filesystem references can hold zeros
+# (btrfs stores some uncompressed), and an encrypted target reads an unwritten
+# sector back as garbage, so the writer must write it.
+K=1024
+freemap="$work/free.map"
+printf '%s %s\n' \
+  $((4 * frame)) "$frame" \
+  $((2 * frame + 128 * K)) $((128 * K)) \
+  $((7 * frame + 16 * K)) $((64 * K)) \
+  $((7 * frame + 200 * K)) $((8 * K)) >"$freemap"
+mapped="$work/mapped.zst"
+masked="$work/masked.img"
+python3 - "$raw" "$masked" "$freemap" <<'PY'
+import sys
+data = bytearray(open(sys.argv[1], "rb").read())
+for line in open(sys.argv[3]):
+    off, n = map(int, line.split())
+    data[off:off + n] = bytes(n)
+open(sys.argv[2], "wb").write(data)
+PY
+
+run pack "$raw" "$mapped" "$freemap"
+[[ $status == 0 ]] || fail "pack with a free map succeeds" "$(cat "$work/stderr")"
+grep -q "free map: 1 frames entirely free" "$work/stderr" ||
+  fail "pack reports the frames the map frees" "$(cat "$work/stderr")"
+pass "pack with a free map succeeds and reports the free frames"
+
+zstd -q -t "$mapped" || fail "the mapped image passes zstd -t"
+zstd -q -dc "$mapped" | cmp -s - "$masked" ||
+  fail "stock zstd -d reads the mapped image as the raw image with its free space zeroed"
+pass "stock zstd -d reads the mapped image as the raw image with its free space zeroed"
+
+target "$work/target" 0
+run write "$mapped" "$work/target" 8
+[[ $status == 0 ]] || fail "write with a free map succeeds" "$(cat "$work/stderr")"
+cmp -s "$work/target" "$masked" || fail "write with a free map reproduces the masked image on a zero target"
+grep -q "(11 frames, 1 free, 11 cached, 8 threads)" "$work/stderr" ||
+  fail "write reports the frames the map freed" "$(cat "$work/stderr")"
+# Frames 0, 1, 3, 5, 6, 8, 9, 10 are one write each; frame 2's first half is
+# one; frame 7 is two: before its 64 KiB free run, and after it with the 8 KiB
+# run (too short to skip) inside. The 128 + 64 KiB skipped are 0.2 MiB.
+grep -q "; 11 writes, 0.2 MiB of free space inside frames skipped" "$work/stderr" ||
+  fail "write reports its requests and the free runs it skipped" "$(cat "$work/stderr")"
+pass "write with a free map reproduces the masked image and reports what it skipped"
+
+# On a target full of 0xff: the free frame and the free runs of 16 KiB and
+# more keep what the target held; frame 5 (zeros, not free) and the 8 KiB
+# free run come out as zeros, written.
+target "$work/target" 255
+run write "$mapped" "$work/target"
+[[ $status == 0 ]] || fail "write with a free map over a non-zero target succeeds" "$(cat "$work/stderr")"
+python3 - "$work/target" "$masked" <<'PY' || fail "the map decides what is written, not the content" "$(cat "$work/stderr")"
+import sys
+got, want = open(sys.argv[1], "rb").read(), open(sys.argv[2], "rb").read()
+F, K = 256 * 1024, 1024
+untouched = [(2 * F + 128 * K, 3 * F), (4 * F, 5 * F), (7 * F + 16 * K, 7 * F + 80 * K)]
+pos = 0
+for start, end in untouched:
+    assert got[pos:start] == want[pos:start], f"bytes {pos}-{start} not written as in the image"
+    assert got[start:end] == b"\xff" * (end - start), f"bytes {start}-{end} were written"
+    pos = end
+assert got[pos:] == want[pos:], f"bytes {pos}- not written as in the image"
+assert got[5 * F:6 * F] == bytes(F), "frame 5 is zeros the filesystem references and was not written"
+PY
+pass "the map decides what is written: free frames and runs are left, referenced zeros are written"
+
+printf '%s %s\n' 1000 4096 >"$work/odd.map"
+run pack "$raw" "$work/odd.zst" "$work/odd.map"
+[[ $status == 1 ]] || fail "pack refuses a free map range that is not 4096-byte aligned" "status $status"
+printf '%s %s\n' "$raw_size" 4096 >"$work/outside.map"
+run pack "$raw" "$work/outside.zst" "$work/outside.map"
+[[ $status == 1 ]] || fail "pack refuses a free map range outside the image" "status $status"
+printf 'x y\n' >"$work/text.map"
+run pack "$raw" "$work/text.zst" "$work/text.map"
+[[ $status == 1 ]] || fail "pack refuses a free map that is not offset-length lines" "status $status"
+pass "pack refuses a free map it cannot trust"
+
+
 # --- refusals: the target untouched ---------------------------------------
 
 # $1: expected status (2 for an image this tool does not write, so the caller
@@ -210,6 +293,22 @@ open(sys.argv[2], "wb").write(data)
 PY
 }
 table=$(( $(stat -c %s "$image") - 9 - 8 * 11 - 8 ))
+
+# The map frame's block count disagreeing with the image: refused, untouched.
+python3 - "$mapped" "$work/badmap.zst" "$raw_size" <<'PY'
+import struct, sys
+data = bytearray(open(sys.argv[1], "rb").read())
+frames = 11
+table = len(data) - 9 - 8 * frames - 8
+blocks = int(sys.argv[3]) // 4096
+map_start = table - 8 - 16 - (blocks + 7) // 8
+assert struct.unpack("<I", data[map_start:map_start + 4])[0] == 0x184D2A5F
+data[map_start + 20:map_start + 24] = struct.pack("<I", blocks + 1)
+open(sys.argv[2], "wb").write(data)
+PY
+target "$work/target" 170
+run write "$work/badmap.zst" "$work/target"
+untouched 2 "refuses a free map that does not cover the image" "$work/target"
 
 zstd -q -c <"$raw" >"$work/plain.zst"
 target "$work/target" 170
