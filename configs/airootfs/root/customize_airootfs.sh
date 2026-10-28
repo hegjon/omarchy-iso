@@ -61,6 +61,15 @@ if [[ -d $fw ]]; then
   echo "Live firmware: ${before} MB -> $(du -sm "$fw" | cut -f1) MB (no radio, datacenter NIC, camera or SoC firmware)."
 fi
 
+# The live console font (Terminus plus the half blocks the logo needs), built
+# here so the installer loads it with setfont alone instead of starting Python
+# on the medium first (i18n_console_font in /usr/share/omarchy-iso/i18n.sh).
+for size in 16 32; do
+  python3 /usr/share/omarchy-iso/console-font.py \
+    "/usr/share/kbd/consolefonts/ter-v${size}b.psf.gz" "/usr/share/omarchy-iso/console-$size.psf" ||
+    echo "WARNING: console-$size.psf not built; the live installer will generate it at boot" >&2
+done
+
 # Nobody reads documentation or compiles against headers in the installer, and
 # it speaks English only.
 rm -rf /usr/share/doc /usr/share/man /usr/share/info /usr/share/gtk-doc /usr/share/gir-1.0 /usr/include
