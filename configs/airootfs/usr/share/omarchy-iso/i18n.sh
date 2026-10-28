@@ -31,15 +31,22 @@ i18n_translated() {
 # gets Terminus, patched for the logo, at the size the kernel picked. Nothing
 # here may fail the caller, which can be running under set -euo pipefail.
 i18n_console_font() {
-  local tty=$1 height terminus font=${OMARCHY_ISO_CONSOLE_FONT:-/run/omarchy-iso/console.psf}
+  local tty=$1 height size=16 font=${OMARCHY_ISO_CONSOLE_FONT:-}
   [[ $tty == /dev/tty[0-9]* ]] || return 0
 
+  height=$(showconsolefont -i -C "$tty" 2>/dev/null | sed -n 's/^[0-9]*x\([0-9]*\)x[0-9]*$/\1/p') || height=16
+  (( ${height:-16} >= 32 )) && size=32
+  if [[ -z $font ]]; then
+    # customize_airootfs.sh builds both sizes into the image: starting Python
+    # for console-font.py on the live medium cost 0.6 s on the usb2 boot
+    # benchmark, with the verify units sharing the stick fairly. An image
+    # without them generates the font once, into /run.
+    font=/usr/share/omarchy-iso/console-$size.psf
+    [[ -s $font ]] || font=/run/omarchy-iso/console-$size.psf
+  fi
   if [[ ! -s $font ]]; then
-    height=$(showconsolefont -i -C "$tty" 2>/dev/null | sed -n 's/^[0-9]*x\([0-9]*\)x[0-9]*$/\1/p') || height=16
-    terminus=/usr/share/kbd/consolefonts/ter-v16b.psf.gz
-    (( ${height:-16} >= 32 )) && terminus=/usr/share/kbd/consolefonts/ter-v32b.psf.gz
     mkdir -p "$(dirname "$font")" 2>/dev/null || return 0
-    python3 "$OMARCHY_ISO_SHARE/console-font.py" "$terminus" "$font" 2>/dev/null || return 0
+    python3 "$OMARCHY_ISO_SHARE/console-font.py" "/usr/share/kbd/consolefonts/ter-v${size}b.psf.gz" "$font" 2>/dev/null || return 0
   fi
   setfont -C "$tty" "$font" 2>/dev/null || true
 }
