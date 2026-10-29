@@ -131,7 +131,13 @@ greeter() {
   printf '\033[?25l\033[H\033[2J'
 
   printf '\033[%d;1H' "$logo_row"
-  gum style --foreground 2 --padding "0 0 0 $PADDING_LEFT" "$(<"$LOGO_PATH")"
+  # Plain escapes rather than gum style: gum is a 14 MB binary and this was
+  # the first thing to need it, every byte of it read off the install medium
+  # before the first screen (0.4 s on a USB 2 stick). The language form right
+  # after this loads it anyway, once the user is reading.
+  while IFS= read -r line; do
+    printf '%s\033[32m%s\033[0m\n' "$PADDING_LEFT_SPACES" "$line"
+  done <"$LOGO_PATH"
 
   tagline="Beautiful, Fun & Agentic Linux by DHH"
   tpad=$(((cols - ${#tagline}) / 2)); (( tpad < 0 )) && tpad=0
