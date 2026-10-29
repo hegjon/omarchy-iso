@@ -91,12 +91,20 @@ warm_offline_mirror() {
   ((budget_kb > 262144)) || return 0
 
   # omarchy-mirror-verify.service and then omarchy-root-image-verify.service
-  # (started at boot) read the shipped mirror and the whole image as they hash
-  # them, and two readers on one USB stick seek against each other: let both
-  # finish first, whatever their verdict. Wait on their start jobs, not on
-  # is-active: while the mirror is hashed the image's job is queued behind it
-  # (Before=) and that unit still reads inactive. The image's pass is the
-  # warm-up for the image too; the read below then keeps it cached.
+  # read the shipped mirror and the whole image as they hash them, and two
+  # readers on one USB stick seek against each other: let both finish first,
+  # whatever their verdict. They start with omarchy-medium-verify.target once
+  # the installer is on screen (the configurator's greeter, or the autoinstall
+  # branch below), so first wait for them to have started: until then neither
+  # has a job and the image unit reads inactive. Then wait on their start
+  # jobs, not on is-active: while the mirror is hashed the image's job is
+  # queued behind it (Before=) and that unit still reads inactive. The image's
+  # pass is the warm-up for the image too; the read below then keeps it cached.
+  until [[ -n $(systemctl list-jobs --no-legend omarchy-mirror-verify.service \
+    omarchy-root-image-verify.service 2>/dev/null) ]] ||
+    [[ $(systemctl is-active omarchy-root-image-verify.service 2>/dev/null) != inactive ]]; do
+    sleep 1
+  done
   while [[ -n $(systemctl list-jobs --no-legend omarchy-mirror-verify.service \
     omarchy-root-image-verify.service 2>/dev/null) ]]; do
     sleep 1
@@ -137,6 +145,9 @@ cd /root
 if /usr/local/bin/omarchy-cidata-load; then
   echo "Autoinstall configuration found on cidata drive; skipping the configurator."
   export OMARCHY_UI_INTERACTIVE=no
+  # No greeter to wait for: hash the install medium from now on (see
+  # warm_offline_mirror above and omarchy-medium-verify.target).
+  systemctl start --no-block omarchy-medium-verify.target 2>/dev/null || true
 else
   ./configurator
 fi

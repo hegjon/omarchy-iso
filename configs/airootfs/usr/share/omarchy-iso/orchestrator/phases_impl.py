@@ -178,8 +178,9 @@ ROOT_IMAGE_SUBVOLUME = "omarchy-root"
 IMAGE_WRITE = Path("/usr/local/bin/omarchy-image-write")
 
 
-# The live ISO starts omarchy-root-image-verify.service at boot: `sha256sum -c`
-# of the image, running while the user is in the configurator. It is the only
+# The live ISO starts omarchy-root-image-verify.service once the installer is
+# on screen (omarchy-medium-verify.target): `sha256sum -c` of the image,
+# running while the user is in the configurator. It is the only
 # verifier. Both this phase and the free-space configurator gate collect its
 # verdict through this helper, which logs the boot medium and its I/O scheduler,
 # waits for the unit if it is still hashing, and starts it if it never ran.

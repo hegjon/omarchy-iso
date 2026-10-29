@@ -36,4 +36,4 @@ IOSchedulingClass=idle
 IOAccounting=yes
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=omarchy-medium-verify.target

@@ -2,8 +2,10 @@
 Description=Verify the Omarchy root image on the install medium
 # The root image and its checksum are plain files on the ISO, which the archiso
 # initramfs mounts before pivoting, so they are there from the first unit on.
-# Starting the hash here, rather than when the install begins, hides the read
-# of a multi-GB stream behind the time the user spends in the configurator.
+# Starting the hash once the installer is on screen (omarchy-medium-verify.target),
+# rather than when the install begins, hides the read of a multi-GB stream
+# behind the time the user spends in the configurator; not at boot, where it
+# would slow the boot's own reads off the same medium.
 # This is the only verifier: the orchestrator's prepare_install_target phase
 # collects the verdict, waits for the unit if it is still running, and fails
 # the install if it could not run.
@@ -32,4 +34,4 @@ IOSchedulingClass=idle
 IOAccounting=yes
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=omarchy-medium-verify.target
