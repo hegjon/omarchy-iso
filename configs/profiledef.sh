@@ -29,11 +29,20 @@ airootfs_image_type="squashfs"
 # cold on every boot: kernel, plymouth, systemd, python, archinstall, gum. The
 # whole ISO grows well under a percent for it, and with no x86 BCJ filter the
 # same options build the aarch64 image too.
+#
+# Kernel modules and firmware are zstd files already (*.ko.zst, *.zst), so the
+# compressor gains nothing on them, and a 1 MiB fragment block made of them
+# stays 1 MiB: every module or firmware blob a machine loads from the live root
+# would cost the whole block it was packed into, ten times its own size for a
+# typical module. Stored uncompressed as their own blocks, each costs its own
+# bytes.
 airootfs_image_tool_options=(
   '-comp' 'zstd'
   '-Xcompression-level' '19'
   '-b' '1M'
   '-action' 'uncompressed@subpathname(var/cache/omarchy/mirror/offline)'
+  '-action' 'uncompressed@name(*.zst)'
+  '-action' 'no-fragments@name(*.zst)'
 )
 bootstrap_tarball_compression=('zstd' '-c' '-T0' '--auto-threads=logical' '--long' '-19')
 file_permissions=(
