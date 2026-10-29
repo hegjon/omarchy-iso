@@ -202,10 +202,18 @@ rm -rf "$build_cache_dir/airootfs/etc/xdg/reflector"
 # _start_target_keyring_init). releng's pacman-init.service would still
 # generate a master key and populate every keyring on each boot: 2.5 s of gpg
 # in QEMU, minutes on a slow stick, reading gpg, libalpm and the keyrings
-# beside the boot. The gnupg tmpfs mount it required stays for a pacman-key
-# run by hand.
+# beside the boot.
 rm -f "$build_cache_dir/airootfs/etc/systemd/system/multi-user.target.wants/pacman-init.service"
 rm -f "$build_cache_dir/airootfs/etc/systemd/system/pacman-init.service"
+# Its tmpfs for the keyring goes too: a mount unit on the boot costs far more
+# than the mount. systemd throttles its watch on the mount table to five
+# changes a second, the first services' sandboxes trip that within the boot's
+# first milliseconds, and every mount unit's job then waits for the second to
+# run out, with local-fs.target and sysinit.target behind it (0.45 s a boot;
+# airootfs/etc/systemd/system/var-lib-machines.mount is masked for the same
+# reason). gnupg's socket units for the keyring stay and bind the directory
+# on the live root's overlay instead.
+rm -f "$build_cache_dir/airootfs/etc/systemd/system/etc-pacman.d-gnupg.mount"
 
 # Bring in our archiso profile additions.
 cp -r /configs/* "$build_cache_dir/"
