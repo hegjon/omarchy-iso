@@ -64,6 +64,16 @@ fi
 # The live console font (Terminus plus the half blocks the logo needs), built
 # here so the installer loads it with setfont alone instead of starting Python
 # on the medium first (i18n_console_font in /usr/share/omarchy-iso/i18n.sh).
+# The vendor and model name tables are left out of udev's hwdb by the pacman
+# hook etc/pacman.d/hooks/60-omarchy-live-hwdb.hook, during the pacstrap so
+# the live initramfs gets the small hwdb.bin too; check that it ran.
+hwdb_kb=$(du -k /usr/lib/udev/hwdb.bin 2>/dev/null | cut -f1)
+if [[ -e /usr/lib/udev/hwdb.d/20-pci-vendor-model.hwdb ]]; then
+  echo "WARNING: the live hwdb still carries the vendor/model name tables (hwdb.bin ${hwdb_kb:-?} KB); 60-omarchy-live-hwdb.hook did not run" >&2
+else
+  echo "Live udev hwdb.bin: ${hwdb_kb:-?} KB (no vendor/model name tables)."
+fi
+
 for size in 16 32; do
   python3 /usr/share/omarchy-iso/console-font.py \
     "/usr/share/kbd/consolefonts/ter-v${size}b.psf.gz" "/usr/share/omarchy-iso/console-$size.psf" ||
