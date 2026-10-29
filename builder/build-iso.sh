@@ -215,6 +215,13 @@ rm -f "$build_cache_dir/airootfs/etc/systemd/system/pacman-init.service"
 # on the live root's overlay instead.
 rm -f "$build_cache_dir/airootfs/etc/systemd/system/etc-pacman.d-gnupg.mount"
 
+# No Wi-Fi on the live image: customize_airootfs.sh leaves every radio's
+# firmware out of it, so releng's iwd would find nothing to drive, yet its
+# start sits between basic.target and network.target on the way to the login
+# (60 to 190 ms, plus cfg80211 and the regulatory database's certificates).
+# The installed system gets iwd from the root image.
+rm -f "$build_cache_dir/airootfs/etc/systemd/system/multi-user.target.wants/iwd.service"
+
 # Bring in our archiso profile additions.
 cp -r /configs/* "$build_cache_dir/"
 install -Dm755 /usr/local/bin/omarchy-image-write "$build_cache_dir/airootfs/usr/local/bin/omarchy-image-write"
