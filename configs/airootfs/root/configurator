@@ -95,8 +95,8 @@ wait_for_stable_terminal() {
       stable=0
     fi
     last=$width
-    sleep 0.2
-    (( waited += 200 ))
+    sleep 0.1
+    (( waited += 100 ))
   done
 }
 
