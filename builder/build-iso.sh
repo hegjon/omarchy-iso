@@ -196,6 +196,17 @@ rm -rf "$build_cache_dir/airootfs/etc/systemd/system/multi-user.target.wants/ref
 rm -rf "$build_cache_dir/airootfs/etc/systemd/system/reflector.service.d"
 rm -rf "$build_cache_dir/airootfs/etc/xdg/reflector"
 
+# Nothing on the live image reads its pacman keyring: the live pacman.conf has
+# the offline mirror alone, at SigLevel Never (configs/pacman-offline.conf),
+# and the installer gives the target a keyring of its own (phases_impl.py,
+# _start_target_keyring_init). releng's pacman-init.service would still
+# generate a master key and populate every keyring on each boot: 2.5 s of gpg
+# in QEMU, minutes on a slow stick, reading gpg, libalpm and the keyrings
+# beside the boot. The gnupg tmpfs mount it required stays for a pacman-key
+# run by hand.
+rm -f "$build_cache_dir/airootfs/etc/systemd/system/multi-user.target.wants/pacman-init.service"
+rm -f "$build_cache_dir/airootfs/etc/systemd/system/pacman-init.service"
+
 # Bring in our archiso profile additions.
 cp -r /configs/* "$build_cache_dir/"
 install -Dm755 /usr/local/bin/omarchy-image-write "$build_cache_dir/airootfs/usr/local/bin/omarchy-image-write"

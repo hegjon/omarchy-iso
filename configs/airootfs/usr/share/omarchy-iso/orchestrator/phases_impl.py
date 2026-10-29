@@ -232,14 +232,15 @@ def _root_image_required_packages() -> list[str]:
 # holders on the install disk (via the bash helper), then parse the
 # configurator output.
 #
-# The live pacman keyring is deliberately NOT waited on. The offline repo is
-# SigLevel = Never (see configs/pacman-offline.conf for why that is required:
-# pacstrap verifies against the LIVE GpgDir, so anything short of Never makes
-# installs depend on archiso's boot-time pacman-init.service). That service
-# (gpg key generation + populating every keyring, Type=oneshot with no start
-# timeout) can take minutes on real hardware reading from USB — blocking on
-# it here stalled installs at 5% while it ground away in the background, and
-# racing it failed pacstrap with "required key missing from keyring".
+# There is no live pacman keyring to wait on. The offline repo is SigLevel =
+# Never (see configs/pacman-offline.conf for why that is required: pacstrap
+# verifies against the LIVE GpgDir, so anything short of Never makes installs
+# depend on a populated live keyring). archiso's boot-time pacman-init.service
+# used to populate one (gpg key generation + every keyring, Type=oneshot with
+# no start timeout), taking minutes on real hardware reading from USB —
+# blocking on it here stalled installs at 5% while it ground away in the
+# background, and racing it failed pacstrap with "required key missing from
+# keyring". The live image no longer runs it (builder/build-iso.sh).
 #
 # archinstall is patched in the wrapper (omarchy-iso-install) BEFORE Python
 # imports it, so no patching happens here.
