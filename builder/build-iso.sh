@@ -1085,6 +1085,17 @@ done
 # Live ISO uses the same offline pacman.conf.
 cp "$build_cache_dir/pacman-offline.conf" "$build_cache_dir/airootfs/etc/pacman.conf"
 
+# The files the live boot reads on its way to the installer's first screen go
+# first in the squashfs, packed together: a boot touches some 1200 files, most
+# of them small, and a small file costs the whole 1 MiB fragment block it was
+# packed into with whatever mksquashfs met next in the tree. The list is what a
+# QEMU boot of a built ISO had in its page cache when the greeter appeared
+# (bin/omarchy-iso-boot-files regenerates it); files it names that an image no
+# longer has are ignored, files it misses are merely laid out as before.
+boot_files_sort="$build_cache_dir/airootfs/usr/share/omarchy-iso/boot-files.sort"
+[[ -s $boot_files_sort ]] || { echo "ERROR: $boot_files_sort is missing or empty" >&2; exit 1; }
+printf '%s\n' "airootfs_image_tool_options+=('-sort' '$boot_files_sort')" >>"$build_cache_dir/profiledef.sh"
+
 # Build the ISO. profiledef.sh reads OMARCHY_ARCH for the archiso arch/bootmodes.
 echo "[timing] mkarchiso start $(date +%s)"
 "$mkarchiso_command" -v -w "$build_cache_dir/work/" -o /out/ "$build_cache_dir/"

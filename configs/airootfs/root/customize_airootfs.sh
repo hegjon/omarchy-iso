@@ -61,9 +61,6 @@ if [[ -d $fw ]]; then
   echo "Live firmware: ${before} MB -> $(du -sm "$fw" | cut -f1) MB (no radio, datacenter NIC, camera or SoC firmware)."
 fi
 
-# The live console font (Terminus plus the half blocks the logo needs), built
-# here so the installer loads it with setfont alone instead of starting Python
-# on the medium first (i18n_console_font in /usr/share/omarchy-iso/i18n.sh).
 # The vendor and model name tables are left out of udev's hwdb by the pacman
 # hook etc/pacman.d/hooks/60-omarchy-live-hwdb.hook, during the pacstrap so
 # the live initramfs gets the small hwdb.bin too; check that it ran.
@@ -74,6 +71,30 @@ else
   echo "Live udev hwdb.bin: ${hwdb_kb:-?} KB (no vendor/model name tables)."
 fi
 
+# The squashfs lays the files in usr/share/omarchy-iso/boot-files.sort out
+# first (builder/build-iso.sh); a package update renames what it names, so
+# count what is left of it.
+boot_files_sort=/usr/share/omarchy-iso/boot-files.sort
+listed=0; missing=0
+while IFS= read -r line; do
+  [[ -n $line && $line != \#* ]] || continue
+  path=${line% *}             # the priority comes last
+  path=${path//\\\\/\\}        # a backslash in a name is written \\
+  path=${path//\\ / }         # a space, "\ "
+  listed=$((listed + 1))
+  [[ -e /$path ]] || missing=$((missing + 1))
+done <"$boot_files_sort"
+if (( listed == 0 )); then
+  echo "WARNING: $boot_files_sort lists nothing; the boot's files are laid out as mksquashfs finds them" >&2
+elif (( missing * 10 > listed )); then
+  echo "WARNING: $missing of the $listed files in $boot_files_sort are not in this image; regenerate it with bin/omarchy-iso-boot-files" >&2
+else
+  echo "Boot file layout: $((listed - missing)) of $listed listed files present."
+fi
+
+# The live console font (Terminus plus the half blocks the logo needs), built
+# here so the installer loads it with setfont alone instead of starting Python
+# on the medium first (i18n_console_font in /usr/share/omarchy-iso/i18n.sh).
 for size in 16 32; do
   python3 /usr/share/omarchy-iso/console-font.py \
     "/usr/share/kbd/consolefonts/ter-v${size}b.psf.gz" "/usr/share/omarchy-iso/console-$size.psf" ||
