@@ -174,6 +174,11 @@ greeter() {
     </dev/null >/dev/tty 2>/dev/null &
   anim=$!
 
+  # The first screen is up: the install medium's hashes may have the stick
+  # from here (omarchy-medium-verify.target); until now every binary the boot
+  # ran came off the same stick and they would have slowed it down.
+  systemctl start --no-block omarchy-medium-verify.target 2>/dev/null || true
+
   IFS= read -r _ </dev/tty || true
   # Tolerate ttfx's kill signal in `wait` so a future `set -e` here can't abort.
   kill "$anim" 2>/dev/null

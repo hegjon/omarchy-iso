@@ -1,0 +1,8 @@
+# The two hashes of the install medium read all of it. The installer starts
+# this target once its first screen is up (the configurator's greeter), or at
+# once on an autoinstall (.automated_script.sh); nothing starts it at boot.
+# Every binary the boot execs comes off the same stick, and hashing beside them
+# cost the greeter 0.4 s (usb3) to 0.8 s (usb2) on the boot benchmark.
+# omarchy-wait-root-image-verify starts the units itself when nothing did.
+[Unit]
+Description=Verify the install medium behind the installer
