@@ -378,6 +378,11 @@ printf '%s\n' "${arch_packages[@]}" >> "$live_packages_file"
 # Anchored so linux-omarchy, linux-t2 and linux-firmware are untouched.
 sed -i -E '/^(linux|broadcom-wl)$/d' "$live_packages_file"
 
+# releng's bcachefs-tools: nothing on the ISO uses it (the installer writes
+# btrfs), its 9.3 MB bcachefs binary was read in full during every boot, and
+# the filesystems hook copies it into the initramfs.
+sed -i '/^bcachefs-tools$/d' "$live_packages_file"
+
 # Build the offline mirror: everything pacstrap might want during the target
 # install. With --local-source, the omarchy* packages we just built are
 # already in the mirror and we filter them out below. Without it, pacman -Syw
