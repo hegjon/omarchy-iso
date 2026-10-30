@@ -1,0 +1,49 @@
+#!/bin/bash
+#
+# The Omarchy logo fitted to the Linux text console. /usr/share/omarchy/logo.txt
+# is 81 columns wide and a BIOS machine boots on an 80-column VGA console, where
+# the last glyph of every line wraps and breaks the picture. This takes out as
+# many all-blank columns as needed, the leftmost first, from every line alike so
+# the glyphs keep their alignment, and writes the result where the live
+# initramfs hook (etc/initcpio/hooks/omarchy-logo) and the configurator read it.
+#
+# Run by etc/pacman.d/hooks/60-omarchy-live-logo.hook during the pacstrap,
+# ahead of mkinitcpio's hook, so the live initramfs gets the file.
+#
+# usage: omarchy-console-logo [source [destination [columns]]]
+
+set -euo pipefail
+
+src=${1:-/usr/share/omarchy/logo.txt}
+dst=${2:-/usr/share/omarchy-iso/logo-console.txt}
+columns=${3:-80}
+
+[[ -r $src ]] || { echo "omarchy-console-logo: $src is missing" >&2; exit 1; }
+
+# gawk counts characters rather than bytes in a UTF-8 locale; the logo is
+# block glyphs, three bytes each.
+fitted=$(LC_ALL=C.UTF-8 awk -v columns="$columns" '
+  { lines[NR] = $0; if (length($0) > max) max = length($0) }
+  END {
+    while (max > columns) {
+      cut = 0
+      for (c = 1; c <= max && !cut; c++) {
+        blank = 1
+        for (i = 1; i <= NR; i++)
+          if (length(lines[i]) >= c && substr(lines[i], c, 1) != " ") { blank = 0; break }
+        if (blank) cut = c
+      }
+      if (!cut) {
+        printf "omarchy-console-logo: %d columns and no blank column left to take out\n", max > "/dev/stderr"
+        exit 1
+      }
+      for (i = 1; i <= NR; i++)
+        if (length(lines[i]) >= cut) lines[i] = substr(lines[i], 1, cut - 1) substr(lines[i], cut + 1)
+      max--
+    }
+    for (i = 1; i <= NR; i++) print lines[i]
+    printf "omarchy-console-logo: %d columns\n", max > "/dev/stderr"
+  }' "$src")
+
+mkdir -p "$(dirname "$dst")"
+printf '%s\n' "$fitted" >"$dst"
