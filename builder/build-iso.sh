@@ -280,6 +280,10 @@ if [[ $OMARCHY_ARCH == aarch64 ]]; then
   install -Dm0644 /builder/qualcomm/early-firmware.py "$build_cache_dir/airootfs/usr/lib/initcpio/qcom-early-firmware.py"
   rm -rf "$build_cache_dir/syslinux" "$build_cache_dir/efiboot"
 else
+  # sshd starts with the install medium's hashes once the greeter is up
+  # (configs/airootfs/etc/systemd/system/omarchy-medium-verify.target), not
+  # at boot: its host keys are generated on every boot, beside the login.
+  rm -f "$build_cache_dir/airootfs/etc/systemd/system/multi-user.target.wants/sshd.service"
   # No Plymouth in the x86_64 live boot (configs/airootfs/etc/mkinitcpio.conf.d/
   # archiso.conf): neither splash nor plymouth.use-simpledrm.
   boot_splash_kernel_options="quiet "
@@ -461,6 +465,9 @@ for excluded_package in "${live_excludes[@]}"; do
   escaped_package=${excluded_package//+/[+]}
   sed -i "\\|^${escaped_package}\$|d" "$live_packages_file"
 done
+# releng enables units of packages that are no longer installed; the dangling
+# links would be ignored, but not silently.
+rm -f "$build_cache_dir"/airootfs/etc/systemd/system/multi-user.target.wants/{hv_fcopy_daemon,hv_kvp_daemon,hv_vss_daemon,iwd,ModemManager,vboxservice,vmtoolsd,vmware-vmblock-fuse}.service
 
 # Build the offline mirror: everything pacstrap might want during the target
 # install. With --local-source, the omarchy* packages we just built are
