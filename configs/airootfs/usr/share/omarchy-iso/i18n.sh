@@ -6,6 +6,9 @@
 
 OMARCHY_ISO_SHARE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 OMARCHY_ISO_I18N_DIR=${OMARCHY_ISO_I18N_DIR:-$OMARCHY_ISO_SHARE/i18n}
+# The boot logo's layout, for its font rule (i18n_console_font).
+# shellcheck source=/dev/null
+[[ -r $OMARCHY_ISO_SHARE/console-logo.sh ]] && source "$OMARCHY_ISO_SHARE/console-logo.sh"
 
 declare -gA OMARCHY_ISO_TEXT=()
 
@@ -28,20 +31,27 @@ i18n_translated() {
 }
 
 # The kernel's console fonts carry only the IBM PC character set, so a Linux VT
-# gets Terminus, patched for the logo, at the size the kernel picked. Nothing
-# here may fail the caller, which can be running under set -euo pipefail.
+# gets Terminus, patched for the logo. On a framebuffer, at the size the boot
+# logo was laid out in (omarchy_console_font_size, console-logo.sh), so the
+# greeter draws over the logo in place; on the VGA text console, at the size
+# the kernel picked. Nothing here may fail the caller, which can be running
+# under set -euo pipefail.
 i18n_console_font() {
   local tty=$1 height size=16 font=${OMARCHY_ISO_CONSOLE_FONT:-}
   [[ $tty == /dev/tty[0-9]* ]] || return 0
 
-  height=$(showconsolefont -i -C "$tty" 2>/dev/null | sed -n 's/^[0-9]*x\([0-9]*\)x[0-9]*$/\1/p') || height=16
-  (( ${height:-16} >= 32 )) && size=32
+  if [[ -e ${OMARCHY_FB:-/sys/class/graphics/fb0} ]] && declare -F omarchy_console_font_size >/dev/null; then
+    size=$(omarchy_console_font_size) || size=16
+  else
+    height=$(showconsolefont -i -C "$tty" 2>/dev/null | sed -n 's/^[0-9]*x\([0-9]*\)x[0-9]*$/\1/p') || height=16
+    (( ${height:-16} >= 32 )) && size=32
+  fi
   if [[ -z $font ]]; then
     # customize_airootfs.sh builds both sizes into the image: starting Python
     # for console-font.py on the live medium cost 0.6 s on the usb2 boot
     # benchmark, with the verify units sharing the stick fairly. An image
     # without them generates the font once, into /run.
-    font=/usr/share/omarchy-iso/console-$size.psf
+    font=$OMARCHY_ISO_SHARE/console-$size.psf
     [[ -s $font ]] || font=/run/omarchy-iso/console-$size.psf
   fi
   if [[ ! -s $font ]]; then

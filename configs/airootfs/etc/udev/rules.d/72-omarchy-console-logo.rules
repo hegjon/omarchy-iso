@@ -1,0 +1,4 @@
+# The boot logo, laid out again when a GPU driver replaces the framebuffer
+# it was drawn on (omarchy-console-logo-redraw decides whether it is still
+# what tty1 shows).
+ACTION=="add", SUBSYSTEM=="graphics", KERNEL=="fb0", RUN+="/usr/local/bin/omarchy-console-logo-redraw"

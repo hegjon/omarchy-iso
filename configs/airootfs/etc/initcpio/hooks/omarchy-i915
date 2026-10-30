@@ -31,14 +31,15 @@ omarchy_i915_wanted() {
 
 run_hook() {
     omarchy_i915_wanted || return 0
+    # In the background: the probe takes seconds on an old panel, and udev's
+    # hook waits for the install medium meanwhile. Then lay the logo out
+    # again for the panel's console (console-logo.sh), unless the live root
+    # has taken over by then: getty or the installer may have tty1.
     (
         modprobe i915 2>/dev/null || exit 0
-        # Lay the logo out again for the panel once its console exists.
-        waited=0
-        while [ ! -e /sys/class/graphics/fb0 ] && [ "$waited" -lt 50 ]; do
-            sleep 0.1
-            waited=$((waited + 1))
-        done
-        command -v omarchy_console_logo >/dev/null 2>&1 && omarchy_console_logo
+        [ -e /init ] && [ -r /usr/share/omarchy-iso/console-logo.sh ] || exit 0
+        # shellcheck source=/dev/null
+        . /usr/share/omarchy-iso/console-logo.sh
+        omarchy_console_logo
     ) &
 }

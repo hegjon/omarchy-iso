@@ -11,7 +11,7 @@ LOGO_PATH="$OMARCHY_PATH/logo.txt"
 # The same logo fitted to the 80-column text console a BIOS machine boots
 # with, written at build time by omarchy-console-logo; shown while the console
 # is still too narrow for the real one.
-CONSOLE_LOGO_PATH="${CONSOLE_LOGO_PATH:-/usr/share/omarchy-iso/logo-console.txt}"
+CONSOLE_LOGO_PATH="${CONSOLE_LOGO_PATH:-/usr/share/omarchy-iso/console-logo/fitted.txt}"
 
 # The setup form — keyboard, timezone, account, and hostname questions, plus the
 # rules their answers are checked against — shared verbatim with the first-boot
@@ -91,17 +91,17 @@ measure_terminal
 # BIOS machine is on its 80-column text console, which on a ThinkPad X200 is
 # until i915 brings the panel up 1.8 s after the login, the logo fitted to 80
 # columns stands in on the screen .automated_script.sh just cleared.
-# The 80-column logo centred on the console, as the initramfs hook lays it
-# out (configs/airootfs/etc/initcpio/hooks/omarchy-logo); the cursor ends up
-# a blank line below it.
+# The 80-column logo where greeter() will draw the real one, as the initramfs
+# hook lays it out (configs/airootfs/etc/initcpio/hooks/omarchy-logo): the
+# block of logo, tagline and hint centred vertically, the logo centred at its
+# full width. The cursor ends up a blank line below it.
 console_logo_draw() {
-  local cols=$1 rows logo_rows logo_cols top left row line
+  local cols=$1 rows logo_rows top left row line
   rows=$(stty size 2>/dev/null </dev/tty | awk '{print $1}')
   [[ $rows =~ ^[0-9]+$ ]] || rows=25
   logo_rows=$(wc -l <"$CONSOLE_LOGO_PATH")
-  logo_cols=$(LC_ALL=C.UTF-8 awk '{ if (length > max) max = length } END { print max + 0 }' "$CONSOLE_LOGO_PATH")
-  top=$(((rows - logo_rows) / 2 + 1)); (( top < 1 )) && top=1
-  left=$(((cols - logo_cols) / 2 + 1)); (( left < 1 )) && left=1
+  top=$(((rows - logo_rows - 4) / 2 + 1)); (( top < 1 )) && top=1
+  left=$(((cols - LOGO_WIDTH) / 2 + 1)); (( left < 1 )) && left=1
   printf '\033[2J\033[32m'
   row=$top
   while IFS= read -r line; do
