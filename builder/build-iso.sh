@@ -285,16 +285,21 @@ else
   # (configs/airootfs/etc/systemd/system/omarchy-medium-verify.target), not
   # at boot: its host keys are generated on every boot, beside the login.
   rm -f "$build_cache_dir/airootfs/etc/systemd/system/multi-user.target.wants/sshd.service"
-  # No Plymouth in the x86_64 live boot (configs/airootfs/etc/mkinitcpio.conf.d/
-  # archiso.conf): neither splash nor plymouth.use-simpledrm.
-  boot_splash_kernel_options="quiet "
   # The boot menu offers Install and Try only, so nothing starts releng's
   # memory test or UEFI shell, which mkarchiso copies onto the medium
   # whenever their packages are in the live system.
   for excluded_package in memtest86+ memtest86+-efi edk2-shell; do
     sed -i "\\|^${excluded_package//+/[+]}$|d" "$build_cache_dir/packages.x86_64"
   done
-  kernel_options="xe.enable_panel_replay=0 initramfs_async=0 intel_idle.states_off=0x3fc usb-storage.delay_use=0"
+  # No Plymouth in the x86_64 live boot (configs/airootfs/etc/mkinitcpio.conf.d/
+  # archiso.conf): neither splash nor plymouth.use-simpledrm.
+  # Nothing but the boot logo and the installer on the console: loglevel=3
+  # keeps the kernel's error lines (a firmware's ACPI complaints, a driver's
+  # probe failures) in the journal, which quiet alone prints, and
+  # systemd.show_status=false keeps systemd's failure and slow-job lines there
+  # too until getty@tty1 turns its status off for good (omarchy-no-idle.conf).
+  boot_splash_kernel_options="quiet "
+  kernel_options="xe.enable_panel_replay=0 initramfs_async=0 intel_idle.states_off=0x3fc usb-storage.delay_use=0 loglevel=3 systemd.show_status=false"
 fi
 for grub_config in "$build_cache_dir/grub/grub.cfg" "$build_cache_dir/grub/loopback.cfg"; do
   configure_grub_platform "$grub_config" "$OMARCHY_ARCH"
