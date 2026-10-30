@@ -274,6 +274,10 @@ if [[ $OMARCHY_ARCH == aarch64 ]]; then
   customize="$build_cache_dir/airootfs/root/customize_airootfs.sh"
   grep -qx 'set -euo pipefail' "$customize" || { echo "ERROR: $customize has no 'set -euo pipefail' line to start after" >&2; exit 1; }
   sed -i "0,/^set -euo pipefail\$/s||set -euo pipefail\\n\\n# The Snapdragon laptops' live UKI.\\nbash /root/qualcomm-live-uki.sh $OMARCHY_KERNEL\\nrm -f /root/qualcomm-live-uki.sh|" "$customize"
+  # Plymouth stays in the aarch64 live boot (its hook goes back into the
+  # initramfs above); x86_64's customize_airootfs.sh removes the package.
+  grep -q '^# >>> no plymouth' "$customize" && grep -q '^# <<< no plymouth' "$customize" || { echo "ERROR: $customize has no 'no plymouth' block to take out" >&2; exit 1; }
+  sed -i '/^# >>> no plymouth/,/^# <<< no plymouth/d' "$customize"
   # Keep the existing late-start path when early firmware is unavailable.
   install -Dm0755 /builder/qualcomm/omarchy-live-dsp "$build_cache_dir/airootfs/usr/local/bin/omarchy-live-dsp"
   install -Dm0644 /builder/qualcomm/omarchy-live-dsp.service "$build_cache_dir/airootfs/etc/systemd/system/omarchy-live-dsp.service"
@@ -285,8 +289,10 @@ if [[ $OMARCHY_ARCH == aarch64 ]]; then
   install -Dm0644 /builder/qualcomm/early-firmware.py "$build_cache_dir/airootfs/usr/lib/initcpio/qcom-early-firmware.py"
   rm -rf "$build_cache_dir/syslinux" "$build_cache_dir/efiboot"
 else
-  boot_splash_kernel_options="quiet splash "
-  kernel_options="xe.enable_panel_replay=0 initramfs_async=0 intel_idle.states_off=0x3fc usb-storage.delay_use=0 plymouth.use-simpledrm"
+  # No Plymouth in the x86_64 live boot (configs/airootfs/etc/mkinitcpio.conf.d/
+  # archiso.conf): neither splash nor plymouth.use-simpledrm.
+  boot_splash_kernel_options="quiet "
+  kernel_options="xe.enable_panel_replay=0 initramfs_async=0 intel_idle.states_off=0x3fc usb-storage.delay_use=0"
 fi
 for grub_config in "$build_cache_dir/grub/grub.cfg" "$build_cache_dir/grub/loopback.cfg"; do
   configure_grub_platform "$grub_config" "$OMARCHY_ARCH"
@@ -376,11 +382,12 @@ if [[ -d /omarchy-source && -d /omarchy-pkgs ]]; then
 fi
 
 # Packages installed into the live ISO environment itself (NOT the target system).
-# The selected omarchy-settings package is needed here so its post_install hook
-# drops Omarchy's plymouthd.conf into /etc/plymouth before mkarchiso builds the
-# live initramfs.
+# The selected omarchy-settings package is needed here: it ships the logo the
+# greeter and the console draw, and on aarch64 its post_install hook drops
+# Omarchy's plymouthd.conf into /etc/plymouth before mkarchiso builds the live
+# initramfs.
 if [[ $OMARCHY_ARCH == aarch64 ]]; then
-  # Plymouth stays out of the live initramfs (archiso-aarch64-mkinitcpio.sh);
+  # Plymouth stays in the live initramfs (archiso-aarch64-mkinitcpio.sh);
   # openssh and pciutils serve the recovery entry and remote debugging.
   # For the Snapdragon laptops: ukify builds the live UKI, and the installer
   # saves a laptop's signed firmware from Windows with qcom-firmware-extract.

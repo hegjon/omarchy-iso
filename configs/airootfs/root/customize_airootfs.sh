@@ -9,6 +9,19 @@
 
 set -euo pipefail
 
+# >>> no plymouth (x86_64; builder/build-iso.sh takes this block out for aarch64)
+# The live boot has no early KMS, so Plymouth drew only on UEFI's firmware
+# framebuffer for a second or two and blanked a BIOS machine's text console;
+# etc/initcpio/hooks/omarchy-logo covers both now. The package is pulled in
+# by omarchy-settings, and leaving it installed leaves its units for systemd
+# to list: remove it outright, dependency record and all, with its config.
+if pacman -Qq plymouth >/dev/null 2>&1; then
+  pacman -Rdd --noconfirm plymouth >/dev/null
+  rm -rf /etc/plymouth
+  echo "Plymouth removed from the live image."
+fi
+# <<< no plymouth
+
 # Stamp the ConditionNeedsUpdate= markers before anything below can exit early.
 # pacstrap leaves /etc newer than the ld.so.cache, the journal catalog and the
 # sysusers stamp it just wrote, so on every live boot systemd re-runs
