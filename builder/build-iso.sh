@@ -241,6 +241,9 @@ if [[ $OMARCHY_ARCH == aarch64 ]]; then
   done
   rm -f "$build_cache_dir/packages.x86_64"
   rm -f "$build_cache_dir/airootfs/etc/mkinitcpio.d/linux.preset" "$build_cache_dir/airootfs/etc/mkinitcpio.d/linux-t2.preset"
+  # No PXE entries on aarch64: the local-media image only.
+  sed -i "s/^PRESETS=.*/PRESETS=('archiso')/" "$build_cache_dir/airootfs/etc/mkinitcpio.d/${OMARCHY_KERNEL}.preset"
+  grep -q "^PRESETS=('archiso')$" "$build_cache_dir/airootfs/etc/mkinitcpio.d/${OMARCHY_KERNEL}.preset" || { echo "ERROR: could not trim the live preset to the local-media image" >&2; exit 1; }
   # Drops the x86-only microcode/memdisk hooks and adds the Tegra/MediaTek
   # I2C-HID keyboard modules.
   configure_archiso_aarch64_mkinitcpio "$build_cache_dir/airootfs/etc/mkinitcpio.conf.d/archiso.conf"
