@@ -1,0 +1,25 @@
+#!/bin/bash
+#
+# Lay the boot logo out again when a GPU driver replaces the framebuffer it
+# was drawn on. The live initramfs loads no GPU driver on most machines
+# (only i915 on the Intel generations that need no firmware), so in the live
+# root the real driver takes the framebuffer from simpledrm, or the VGA text
+# console from vgacon, and fbcon rebuilds the console with the kernel's
+# default font: the logo is left at a corner, at the wrong size. Run by udev
+# when a framebuffer appears (etc/udev/rules.d/72-omarchy-console-logo.rules),
+# this redraws it where the greeter will draw (console-logo.sh), but only
+# while the logo is what tty1 shows: not once .automated_script.sh has tty1,
+# and not for udev's replay of the framebuffer the logo is already on.
+
+run=${OMARCHY_RUN_DIR:-/run/omarchy-iso}
+fb=${OMARCHY_FB:-/sys/class/graphics/fb0}
+share=${OMARCHY_ISO_SHARE:-/usr/share/omarchy-iso}
+
+[[ -e $run/tty1-taken ]] && exit 0
+[[ -r $run/console-logo ]] || exit 0
+name=$(cat "$fb/name" 2>/dev/null) || exit 0
+[[ $name != "$(cat "$run/console-logo" 2>/dev/null)" ]] || exit 0
+# shellcheck source=/dev/null
+source "$share/console-logo.sh" || exit 0
+omarchy_console_logo
+exit 0

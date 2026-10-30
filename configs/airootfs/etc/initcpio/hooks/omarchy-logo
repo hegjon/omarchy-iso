@@ -1,52 +1,12 @@
 #!/usr/bin/ash
-# The Omarchy logo on tty1 before anything else happens in the initramfs.
-#
-# A BIOS machine boots on the VGA text console and gets a framebuffer only
-# when its GPU driver loads: on a ThinkPad X200 that is 10 s after the kernel
-# starts, and until then the screen was black. The logo in Omarchy's green on
-# its dark background fills that time and stays until the greeter draws over
-# it: Plymouth is not in this initramfs, getty@tty1 keeps the VT
-# (TTYVTDisallocate=no) and the configurator shows the same file while it
-# waits for a console wider than 80 columns. On UEFI, simpledrm gives a
-# framebuffer console from the start, so it shows there too.
-#
-# omarchy_console_logo lays it out for the console's size, read from the
-# VT's own header in /dev/vcsa1 (rows, columns), centred with a blank line
-# above and below. A framebuffer console tall and wide enough (1280x800 and
-# up with the kernel's 8x16 font) gets the 32 px Terminus the greeter uses,
-# so the logo is not a stamp in the corner of a large panel. hooks/omarchy-i915
-# calls it again once it has brought a panel up.
-omarchy_console_logo() {
-    # The paths are variables for the unit test (test/unit/console-logo-hook-test.sh).
-    local tty=${OMARCHY_TTY:-/dev/tty1} vcsa=${OMARCHY_VCSA:-/dev/vcsa1}
-    local logo=${OMARCHY_CONSOLE_LOGO:-/usr/share/omarchy-iso/logo-console.txt}
-    local font=${OMARCHY_CONSOLE_FONT:-/usr/share/omarchy-iso/console-font-32.psf}
-    local rows cols logo_rows logo_cols top left row line
-    [ -e "$tty" ] && [ -r "$logo" ] || return 0
-    # shellcheck disable=SC2046 # rows and columns, two words
-    set -- $(hexdump -n 2 -v -e '1/1 "%u "' "$vcsa" 2>/dev/null)
-    rows=${1:-25}; cols=${2:-80}
-    if [ "$rows" -ge 40 ] && [ "$cols" -ge 160 ] && [ -r "$font" ] && setfont -C "$tty" "$font" 2>/dev/null; then
-        # shellcheck disable=SC2046
-        set -- $(hexdump -n 2 -v -e '1/1 "%u "' "$vcsa" 2>/dev/null)
-        rows=${1:-$rows}; cols=${2:-$cols}
-    fi
-    logo_rows=$(wc -l <"$logo")
-    logo_cols=$(awk '{ if (length > max) max = length } END { print max + 0 }' "$logo")
-    top=$(( (rows - logo_rows) / 2 + 1 )); [ "$top" -lt 1 ] && top=1
-    left=$(( (cols - logo_cols) / 2 + 1 )); [ "$left" -lt 1 ] && left=1
-    {
-        # Palette entries 0 and 2 as .automated_script.sh sets them later.
-        printf '\033]P01a1b26\033]P29ece6a\033[2J\033[32m'
-        row=$top
-        while IFS= read -r line; do
-            printf '\033[%d;%dH%s' "$row" "$left" "$line"
-            row=$((row + 1))
-        done <"$logo"
-        printf '\033[0m\033[%d;1H' "$((row + 1))"
-    } >"$tty" 2>/dev/null
-}
-
+# The Omarchy logo on tty1 before anything else happens in the initramfs,
+# where the installer's greeter will draw it: the layout and the reasons are
+# in /usr/share/omarchy-iso/console-logo.sh. Plymouth is not in this
+# initramfs, getty@tty1 keeps the VT (TTYVTDisallocate=no), and
+# .automated_script.sh leaves the logo up until the greeter draws over it.
 run_earlyhook() {
+    [ -r /usr/share/omarchy-iso/console-logo.sh ] || return 0
+    # shellcheck source=/dev/null
+    . /usr/share/omarchy-iso/console-logo.sh
     omarchy_console_logo
 }

@@ -84,19 +84,23 @@ else
   echo "Live udev hwdb.bin: ${hwdb_kb:-?} KB (no vendor/model name tables)."
 fi
 
-# The logo fitted to the 80-column console is written by the pacman hook
-# etc/pacman.d/hooks/60-omarchy-live-logo.hook, during the pacstrap so the
-# live initramfs gets it too; check that it ran and that the result fits.
-console_logo=/usr/share/omarchy-iso/logo-console.txt
-if [[ -s $console_logo ]]; then
-  console_logo_columns=$(LC_ALL=C.UTF-8 awk '{ if (length > max) max = length } END { print max+0 }' "$console_logo")
-  if (( console_logo_columns > 80 )); then
-    echo "WARNING: $console_logo is $console_logo_columns columns wide and wraps on a VGA text console" >&2
+# The console logo (the greeter's and a copy fitted to 80 columns, with their
+# widths) is written by the pacman hook etc/pacman.d/hooks/60-omarchy-live-
+# logo.hook, during the pacstrap so the live initramfs gets it too; check
+# that it ran and that the fitted one fits.
+console_logo=/usr/share/omarchy-iso/console-logo
+if [[ -s $console_logo/fitted.txt && -s $console_logo/greeter.txt ]]; then
+  fitted_columns=$(LC_ALL=C.UTF-8 awk '{ if (length > max) max = length } END { print max+0 }' "$console_logo/fitted.txt")
+  greeter_columns=$(LC_ALL=C.UTF-8 awk '{ if (length > max) max = length } END { print max+0 }' "$console_logo/greeter.txt")
+  if (( fitted_columns > 80 )); then
+    echo "WARNING: $console_logo/fitted.txt is $fitted_columns columns wide and wraps on a VGA text console" >&2
+  elif [[ $(cat "$console_logo/fitted.cols" 2>/dev/null) != "$fitted_columns" || $(cat "$console_logo/greeter.cols" 2>/dev/null) != "$greeter_columns" ]]; then
+    echo "WARNING: the widths in $console_logo/*.cols are wrong; the boot logo would not sit where the greeter draws" >&2
   else
-    echo "Console logo: $console_logo_columns columns."
+    echo "Console logo: $greeter_columns columns, $fitted_columns for the VGA console."
   fi
 else
-  echo "WARNING: $console_logo is missing; 60-omarchy-live-logo.hook did not run, the live boot shows no logo before the greeter" >&2
+  echo "WARNING: $console_logo is incomplete; 60-omarchy-live-logo.hook did not run, the live boot shows no logo before the greeter" >&2
 fi
 
 # The squashfs lays the files in usr/share/omarchy-iso/boot-files.sort out
