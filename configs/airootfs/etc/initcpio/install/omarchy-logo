@@ -1,0 +1,31 @@
+#!/bin/bash
+# mkinitcpio install hook: the Omarchy logo on the console from the moment
+# the initramfs starts (hooks/omarchy-logo).
+
+build() {
+    local logo=/usr/share/omarchy-iso/logo-console.txt font=/usr/share/kbd/consolefonts/ter-v32b.psf.gz tmp
+    if [[ -r $logo ]]; then
+        add_file "$logo"
+    else
+        warning "%s is missing: the live boot shows no logo before the greeter" "$logo"
+    fi
+    # The 32 px Terminus the greeter uses, uncompressed for busybox's setfont.
+    if [[ -r $font ]]; then
+        tmp=$(mktemp)
+        zcat "$font" >"$tmp" && add_file "$tmp" /usr/share/omarchy-iso/console-font-32.psf 644
+        rm -f "$tmp"
+    else
+        warning "%s is missing: the console logo keeps the kernel's 8x16 font on large panels" "$font"
+    fi
+    add_runscript
+}
+
+help() {
+    cat <<HELPEOF
+Prints the Omarchy logo on tty1 as the first thing the initramfs does, so a
+machine without an early KMS driver shows it instead of a black screen until
+the installer's greeter: centred, and in the 32 px console font on a panel
+large enough. Reads /usr/share/omarchy-iso/logo-console.txt, the logo fitted
+to 80 columns by omarchy-console-logo during the pacstrap.
+HELPEOF
+}

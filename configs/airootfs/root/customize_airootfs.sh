@@ -71,6 +71,21 @@ else
   echo "Live udev hwdb.bin: ${hwdb_kb:-?} KB (no vendor/model name tables)."
 fi
 
+# The logo fitted to the 80-column console is written by the pacman hook
+# etc/pacman.d/hooks/60-omarchy-live-logo.hook, during the pacstrap so the
+# live initramfs gets it too; check that it ran and that the result fits.
+console_logo=/usr/share/omarchy-iso/logo-console.txt
+if [[ -s $console_logo ]]; then
+  console_logo_columns=$(LC_ALL=C.UTF-8 awk '{ if (length > max) max = length } END { print max+0 }' "$console_logo")
+  if (( console_logo_columns > 80 )); then
+    echo "WARNING: $console_logo is $console_logo_columns columns wide and wraps on a VGA text console" >&2
+  else
+    echo "Console logo: $console_logo_columns columns."
+  fi
+else
+  echo "WARNING: $console_logo is missing; 60-omarchy-live-logo.hook did not run, the live boot shows no logo before the greeter" >&2
+fi
+
 # The squashfs lays the files in usr/share/omarchy-iso/boot-files.sort out
 # first (builder/build-iso.sh); a package update renames what it names, so
 # count what is left of it.

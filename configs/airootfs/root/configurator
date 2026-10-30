@@ -8,6 +8,10 @@ OMARCHY_RUNTIME_PACKAGE="${OMARCHY_RUNTIME_PACKAGE:-omarchy}"
 OMARCHY_SETTINGS_PACKAGE="${OMARCHY_SETTINGS_PACKAGE:-omarchy-settings}"
 
 LOGO_PATH="$OMARCHY_PATH/logo.txt"
+# The same logo fitted to the 80-column text console a BIOS machine boots
+# with, written at build time by omarchy-console-logo; shown while the console
+# is still too narrow for the real one.
+CONSOLE_LOGO_PATH="${CONSOLE_LOGO_PATH:-/usr/share/omarchy-iso/logo-console.txt}"
 
 # The setup form — keyboard, timezone, account, and hostname questions, plus the
 # rules their answers are checked against — shared verbatim with the first-boot
@@ -83,9 +87,32 @@ measure_terminal
 # pty) has the same problem the other way: it reports a stale 24x80 for a few
 # hundred ms after start before its real winsize is set. Either way, hold the
 # first draw until the width settles at (or above) the logo width. A real VT
-# that never widens (e.g. nomodeset) still proceeds after the cap.
+# that never widens (e.g. nomodeset) still proceeds after the cap. While a
+# BIOS machine is on its 80-column text console, which on a ThinkPad X200 is
+# until i915 brings the panel up 1.8 s after the login, the logo fitted to 80
+# columns stands in on the screen .automated_script.sh just cleared.
+# The 80-column logo centred on the console, as the initramfs hook lays it
+# out (configs/airootfs/etc/initcpio/hooks/omarchy-logo); the cursor ends up
+# a blank line below it.
+console_logo_draw() {
+  local cols=$1 rows logo_rows logo_cols top left row line
+  rows=$(stty size 2>/dev/null </dev/tty | awk '{print $1}')
+  [[ $rows =~ ^[0-9]+$ ]] || rows=25
+  logo_rows=$(wc -l <"$CONSOLE_LOGO_PATH")
+  logo_cols=$(LC_ALL=C.UTF-8 awk '{ if (length > max) max = length } END { print max + 0 }' "$CONSOLE_LOGO_PATH")
+  top=$(((rows - logo_rows) / 2 + 1)); (( top < 1 )) && top=1
+  left=$(((cols - logo_cols) / 2 + 1)); (( left < 1 )) && left=1
+  printf '\033[2J\033[32m'
+  row=$top
+  while IFS= read -r line; do
+    printf '\033[%d;%dH%s' "$row" "$left" "$line"
+    ((row++))
+  done <"$CONSOLE_LOGO_PATH"
+  printf '\033[0m\033[%d;1H' "$((row + 1))"
+}
+
 wait_for_stable_terminal() {
-  local width last="" stable=0 waited=0
+  local width last="" stable=0 waited=0 shown=0
   while (( waited < 5000 )); do
     width=$(stty size 2>/dev/null </dev/tty | awk '{print $2}')
     [[ $width =~ ^[0-9]+$ ]] || width=0
@@ -93,6 +120,10 @@ wait_for_stable_terminal() {
       (( ++stable >= 3 )) && break
     else
       stable=0
+    fi
+    if (( !shown && width > 0 && width < LOGO_WIDTH )) && [[ -r $CONSOLE_LOGO_PATH ]]; then
+      console_logo_draw "$width"
+      shown=1
     fi
     last=$width
     sleep 0.1
