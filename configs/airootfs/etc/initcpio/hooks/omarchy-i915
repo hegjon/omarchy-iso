@@ -1,0 +1,44 @@
+#!/usr/bin/ash
+# i915 from the initramfs, on the Intel GPUs that need no firmware.
+#
+# This initramfs has no kms hook (etc/mkinitcpio.conf.d/archiso.conf), so a
+# BIOS machine stays on the VGA text console until i915 loads from the live
+# root: on a ThinkPad X200 that is 1.8 s after the login, the panel is dark
+# for 3.7 s while the driver brings it up, and the greeter waits for the
+# wider console the whole time. Loaded here instead, the modeset overlaps
+# the wait for the install medium and the console is a framebuffer at the
+# login. Only the generations before Skylake qualify (i915-early.ids): later
+# ones want firmware the initramfs does not carry, so they keep loading from
+# the live root. A blacklist in the initramfs keeps udev from loading i915 by
+# alias for those; loading it by name here is not subject to it.
+omarchy_i915_wanted() {
+    # The paths are variables for the unit test (test/unit/i915-early-hook-test.sh).
+    local ids=${OMARCHY_I915_IDS:-/usr/share/omarchy-iso/i915-early.ids} pci=${OMARCHY_PCI_DEVICES:-/sys/bus/pci/devices}
+    local dev vendor class device
+    [ -r "$ids" ] || return 1
+    for dev in "$pci"/*; do
+        [ -r "$dev/vendor" ] && [ -r "$dev/class" ] && [ -r "$dev/device" ] || continue
+        read -r vendor <"$dev/vendor"
+        [ "$vendor" = 0x8086 ] || continue
+        read -r class <"$dev/class"
+        case $class in 0x0300*) ;; *) continue ;; esac
+        read -r device <"$dev/device"
+        device=${device#0x}
+        grep -qx "$device" "$ids" && return 0
+    done
+    return 1
+}
+
+run_hook() {
+    omarchy_i915_wanted || return 0
+    (
+        modprobe i915 2>/dev/null || exit 0
+        # Lay the logo out again for the panel once its console exists.
+        waited=0
+        while [ ! -e /sys/class/graphics/fb0 ] && [ "$waited" -lt 50 ]; do
+            sleep 0.1
+            waited=$((waited + 1))
+        done
+        command -v omarchy_console_logo >/dev/null 2>&1 && omarchy_console_logo
+    ) &
+}
