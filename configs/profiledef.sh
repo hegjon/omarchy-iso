@@ -26,7 +26,7 @@ airootfs_image_type="squashfs"
 # Everything else in the live root is zstd rather than xz. Squashfs decompresses
 # on the page-fault path through a single stream (CONFIG_SQUASHFS_DECOMP_SINGLE),
 # where xz manages ~100MB/s against zstd's ~900MB/s, and the live root is read
-# cold on every boot: kernel, plymouth, systemd, python, archinstall, gum. The
+# cold on every boot: kernel, systemd, python, archinstall, gum. The
 # whole ISO grows well under a percent for it, and with no x86 BCJ filter the
 # same options build the aarch64 image too.
 #
