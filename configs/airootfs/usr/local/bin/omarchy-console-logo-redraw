@@ -10,16 +10,43 @@
 # this redraws it where the greeter will draw (console-logo.sh), but only
 # while the logo is what tty1 shows: not once .automated_script.sh has tty1,
 # and not for udev's replay of the framebuffer the logo is already on.
+#
+# --wait: started by the i915 initramfs hook (etc/initcpio/hooks/omarchy-i915)
+# inside the new root, just before switch_root, while i915 is still bringing
+# the panel up. /dev, /sys and /run are not there yet, so it reads what it
+# needs from the root first, then waits without touching them (no
+# redirections) until a framebuffer other than the one the logo was laid out
+# on appears, five seconds at most. From the VGA text console it also waits
+# for fbcon to have the panel: i915 registers its framebuffer before the
+# takeover's modeset is done, 0.6 s before on the X200, and the console is
+# 80x25 until then.
 
 run=${OMARCHY_RUN_DIR:-/run/omarchy-iso}
 fb=${OMARCHY_FB:-/sys/class/graphics/fb0}
 share=${OMARCHY_ISO_SHARE:-/usr/share/omarchy-iso}
 
+# shellcheck source=/dev/null
+source "$share/console-logo.sh" || exit 0
+
+if [[ ${1:-} == --wait ]]; then
+  for ((i = 0; ; i++)); do
+    (( i < ${OMARCHY_REDRAW_WAIT_STEPS:-100} )) || exit 0
+    [[ -e $run/tty1-taken ]] && exit 0
+    if [[ -r $fb/name && -r $run/console-logo ]]; then
+      read -r name <"$fb/name"
+      read -r laid_out <"$run/console-logo"
+      if [[ $name != "$laid_out" ]]; then
+        [[ $laid_out != none || $(omarchy_console_size) != "25 80 " ]] && break
+      fi
+    fi
+    sleep 0.05
+  done
+  rm -f "$run/i915-loading"
+fi
+
 [[ -e $run/tty1-taken ]] && exit 0
 [[ -r $run/console-logo ]] || exit 0
 name=$(cat "$fb/name" 2>/dev/null) || exit 0
 [[ $name != "$(cat "$run/console-logo" 2>/dev/null)" ]] || exit 0
-# shellcheck source=/dev/null
-source "$share/console-logo.sh" || exit 0
 omarchy_console_logo
 exit 0

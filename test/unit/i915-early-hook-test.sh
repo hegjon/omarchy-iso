@@ -50,4 +50,39 @@ wanted "no PCI devices: nothing" no
 bus; device 0000:00:02.0 8086 2a42 030000
 OMARCHY_I915_IDS="$work/missing" wanted "no ID list: nothing" no
 
+# run_hook marks i915 as loading for as long as modprobe runs; run_latehook,
+# just before switch_root, hands the redraw to the live root's helper inside
+# the new root while it still is.
+export OMARCHY_RUN_DIR="$work/run" OMARCHY_SYSROOT="$work/sysroot" OMARCHY_INIT="$work/init"
+: >"$work/init"
+helper="$work/sysroot/usr/local/bin/omarchy-console-logo-redraw"
+mkdir -p "${helper%/*}"; printf '#!/bin/bash\n' >"$helper"; chmod 755 "$helper"
+modprobe() { sleep 0.3; echo "modprobe: an error" >&2; }
+chroot() { echo "chroot $*" >>"$work/chroot.log"; }
+bus; device 0000:00:02.0 8086 2a42 030000
+run_hook 2>"$work/hook-stderr"
+if [[ -e $work/run/i915-loading ]]; then ok "run_hook marks i915 as loading"; else fail "run_hook left no i915-loading marker"; fi
+run_latehook
+wait
+if [[ -s $work/hook-stderr ]]; then fail "the background job wrote to the console: $(cat "$work/hook-stderr")"; else ok "the background job's errors go nowhere, not to the console"; fi
+want="chroot $work/sysroot /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bin /usr/local/bin/omarchy-console-logo-redraw --wait"
+if [[ $(cat "$work/chroot.log" 2>/dev/null) == "$want" ]]; then ok "run_latehook starts the redraw helper inside the new root while i915 loads"; else fail "run_latehook ran: $(cat "$work/chroot.log" 2>/dev/null)"; fi
+if [[ -e $work/run/i915-loading ]]; then fail "the marker stayed after modprobe returned"; else ok "the marker goes when modprobe returns"; fi
+rm -f "$work/chroot.log"
+run_latehook; wait
+if [[ -e $work/chroot.log ]]; then fail "run_latehook started the helper with i915 loaded"; else ok "run_latehook does nothing once i915 is loaded"; fi
+# After switch_root (no /init) the job runs builtins only: rm went with the
+# initramfs, so the marker stays for the live root's helper to clear.
+rm -f "$work/init"
+run_hook; wait
+if [[ -e $work/run/i915-loading ]]; then ok "after switch_root the marker stays for the live root's helper"; else fail "the job ran rm after switch_root"; fi
+rm -f "$work/run/i915-loading"; : >"$work/init"
+: >"$work/run/i915-loading"; rm -f "$helper"
+run_latehook; wait
+if [[ -e $work/chroot.log ]]; then fail "run_latehook ran without a helper in the new root"; else ok "run_latehook does nothing without the helper in the new root"; fi
+rm -f "$work/run/i915-loading"
+bus; device 0000:00:02.0 8086 1916 030000
+run_hook; wait
+if [[ -e $work/run/i915-loading ]]; then fail "a Skylake GPU got the marker"; else ok "no marker where i915 is not loaded early"; fi
+
 exit "$((failures > 0))"

@@ -15,7 +15,7 @@
 #   1280x800 and 1600x900 keep 8x16; and the greeter's own font choice
 #   (i18n_console_font) agrees for each.
 # - omarchy-console-logo-redraw: only when a different framebuffer took over,
-#   and never once the installer has tty1.
+#   and never once the installer has tty1; with --wait, as soon as one does.
 
 set -euo pipefail
 
@@ -146,6 +146,51 @@ fb 1920 1080 amdgpudrmfb; : >"$work/run/tty1-taken"
 check "redraw: nothing once the installer has tty1" "$(redraw)" ""
 rm -f "$work/run/tty1-taken" "$work/run/console-logo"
 check "redraw: nothing when no boot logo was drawn" "$(redraw)" ""
+
+# --wait: the i915 hook starts it inside the new root before switch_root, and
+# it lays the logo out once the panel's framebuffer replaces the one the logo
+# was drawn on (none on the VGA text console).
+rm -f "$work/run/tty1-taken" "$work/run/console-logo"
+fb none; size 25 80; : >"$work/tty"
+OMARCHY_REDRAW_WAIT_STEPS=60 "$REDRAW" --wait &
+waiter=$!
+sleep 0.3
+check "redraw --wait: nothing while there is no framebuffer and no record" "$(cat -v "$work/tty")" ""
+echo none >"$work/run/console-logo"; size 50 160; fb 1280 800 i915drmfb
+wait "$waiter"
+expect "redraw --wait: the logo for the panel's console once it is there, rows 22-24 at column 75" "$(cat -v "$work/tty")" '^[[22;75H' '^[[23;75H' '^[[24;75H'
+check "redraw --wait: records the panel's framebuffer" "$(cat "$work/run/console-logo")" i915drmfb
+# i915's framebuffer is registered before fbcon has the panel: the console
+# stays 80x25 until the takeover's modeset is done.
+echo none >"$work/run/console-logo"; fb 1280 800 i915drmfb; size 25 80; : >"$work/tty"
+: >"$work/run/i915-loading"
+OMARCHY_REDRAW_WAIT_STEPS=60 "$REDRAW" --wait &
+waiter=$!
+sleep 0.3
+check "redraw --wait: nothing while fbcon is still taking the panel over" "$(cat -v "$work/tty")" ""
+size 50 160
+wait "$waiter"
+expect "redraw --wait: laid out for the panel once fbcon has it, rows 22-24 at column 75" "$(cat -v "$work/tty")" '^[[22;75H' '^[[23;75H' '^[[24;75H'
+if [[ -e $work/run/i915-loading ]]; then fail "redraw --wait: left the i915-loading marker"; else ok "redraw --wait: clears the i915-loading marker"; fi
+# UEFI: the logo is on simpledrm until i915 takes the framebuffer over.
+fb 1920 1080 simpledrmdrmfb; size 67 240; echo simpledrmdrmfb >"$work/run/console-logo"; : >"$work/tty"
+OMARCHY_REDRAW_WAIT_STEPS=60 "$REDRAW" --wait &
+waiter=$!
+sleep 0.3
+check "redraw --wait: nothing while the logo's framebuffer is still there" "$(cat -v "$work/tty")" ""
+fb 1920 1080 i915drmfb
+wait "$waiter"
+expect "redraw --wait: i915's framebuffer gets the logo in 32 px at row 14, column 55" "$(cat -v "$work/tty")" '^[[14;55H'
+# The installer takes tty1 first, or no new framebuffer comes.
+fb none; echo none >"$work/run/console-logo"; : >"$work/tty"
+OMARCHY_REDRAW_WAIT_STEPS=60 "$REDRAW" --wait &
+waiter=$!
+sleep 0.2; : >"$work/run/tty1-taken"; size 50 160; fb 1280 800 i915drmfb
+wait "$waiter"
+check "redraw --wait: nothing once the installer has tty1" "$(cat -v "$work/tty")" ""
+rm -f "$work/run/tty1-taken"; fb none; : >"$work/tty"
+OMARCHY_REDRAW_WAIT_STEPS=4 "$REDRAW" --wait
+check "redraw --wait: gives up when no framebuffer comes" "$(cat -v "$work/tty")" ""
 
 # No logo files: nothing drawn, no error.
 export OMARCHY_CONSOLE_LOGO_DIR="$work/missing"
