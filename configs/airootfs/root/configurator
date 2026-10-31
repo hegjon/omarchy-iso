@@ -137,6 +137,20 @@ clear_logo() {
   gum style --foreground 2 --padding "1 0 0 $PADDING_LEFT" "$(<"$LOGO_PATH")"
 }
 
+# ttfx with --reuse-canvas writes its canvas first, spaces over the whole logo,
+# then a frame every 1/60 s, each opening with a cursor restore (ESC 8). This
+# passes the frames on and drops the canvas, all up to the first frame's ESC 8
+# (the second one ttfx writes), and nothing at all if no frame comes.
+ttfx_frames() {
+  local piece restores=0
+  while (( restores < 2 )) && IFS= read -r -d $'\e' piece; do
+    [[ $piece == 8* ]] && restores=$((restores + 1))
+  done
+  (( restores == 2 )) || return 0
+  printf '\e8\e'
+  exec cat
+}
+
 # Vertically-centered welcome shown once before the keyboard step — the same
 # frame the deferred-provisioning first boot opens on, so install and first boot
 # bookend the setup identically. Logo, the Omarchy tagline, and a single button,
@@ -159,7 +173,14 @@ greeter() {
   tagline_row=$((top + logo_h + 2))
   hint_row=$((top + logo_h + 4))
 
-  printf '\033[?25l\033[H\033[2J'
+  # The boot logo (/usr/share/omarchy-iso/console-logo.sh) is in this very
+  # place already. Clearing the whole screen first would blank it for a
+  # frame between the boot and the greeter, so clear around it instead: the
+  # rows above, each logo row as it is printed again (erase and print in one
+  # write, which the console draws in one go), and the rows below. Whatever
+  # else was on the console goes all the same.
+  printf '\033[?25l'
+  (( logo_row > 1 )) && printf '\033[%d;%dH\033[1J' "$((logo_row - 1))" "$cols"
 
   printf '\033[%d;1H' "$logo_row"
   # Plain escapes rather than gum style: gum is a 14 MB binary and this was
@@ -167,8 +188,9 @@ greeter() {
   # before the first screen (0.4 s on a USB 2 stick). The language form right
   # after this loads it anyway, once the user is reading.
   while IFS= read -r line; do
-    printf '%s\033[32m%s\033[0m\n' "$PADDING_LEFT_SPACES" "$line"
+    printf '\033[2K%s\033[32m%s\033[0m\n' "$PADDING_LEFT_SPACES" "$line"
   done <"$LOGO_PATH"
+  printf '\033[J'
 
   tagline="Beautiful, Fun & Agentic Linux by DHH"
   tpad=$(((cols - ${#tagline}) / 2)); (( tpad < 0 )) && tpad=0
@@ -190,10 +212,15 @@ greeter() {
   # Return; --reuse-canvas paints upward from the saved cursor, anchored one row
   # below the logo.
   printf '\033[%d;1H\0337' "$((logo_row + logo_h))"
-  # Run ttfx directly (not inside a `while` subshell) so $anim is ttfx's own
-  # PID: killing a wrapping subshell would orphan ttfx, which then keeps
-  # painting the logo over the keyboard step. --cycles is high enough that it
-  # never ends on its own before Return.
+  # ttfx's first write is its canvas in spaces over the logo printed above,
+  # its first frame follows 13 ms later. Even in one write the console erases
+  # the logo first and then draws the frame cell by cell from the top, which
+  # the X200 showed as the logo's lower rows dimmed for a frame. ttfx_frames
+  # drops that canvas, so every frame draws over the logo, never over a blank.
+  # $anim is the pipe's reader: killing it ends the paint at once, and ttfx
+  # exits on its next write into the closed pipe (16 ms at 60 frames a
+  # second), so it never paints over the keyboard step. --cycles is high
+  # enough that it never ends on its own before Return.
   # Two columns narrower than the console: ttfx centers its text two columns
   # right of plain centering, so a full-width canvas would sit the animated
   # logo a column off the gum-drawn one underneath it.
@@ -208,7 +235,7 @@ greeter() {
     --gradient-frames 3 \
     --cycles 1000 \
     --final-gradient-stops 2 \
-    </dev/null >/dev/tty 2>/dev/null &
+    </dev/null 2>/dev/null | ttfx_frames >/dev/tty 2>/dev/null &
   anim=$!
 
   # The first screen is up: the install medium's hashes may have the stick
