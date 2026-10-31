@@ -9,4 +9,13 @@ run_earlyhook() {
     # shellcheck source=/dev/null
     . /usr/share/omarchy-iso/console-logo.sh
     omarchy_console_logo
+    # The half-size logo in its own font: clear the console when a GPU driver
+    # takes the VGA console away (console-logo.sh), in the background; it
+    # stops at switch_root, and the live root's helper takes over from there
+    # (hooks/omarchy-i915's late hook). Its errors go nowhere: switch_root
+    # deletes sleep and grep with the initramfs, and they would land on the
+    # console.
+    if [ -e /run/omarchy-iso/console-logo-vga ]; then
+        omarchy_console_vga_watch 2>/dev/null &
+    fi
 }

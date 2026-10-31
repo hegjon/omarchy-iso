@@ -7,8 +7,11 @@
 # greeter will load. These cases run the layout against a fake console: the
 # VT's size header, the framebuffer's sysfs directory, setfont, the logos.
 #
-# - The VGA text console (no framebuffer): the greeter's logo where it fits,
-#   the copy fitted to 80 columns where it does not; no takeover glyph.
+# - The VGA text console (no framebuffer): the half-size logo in its own
+#   font (vga-logo-font.py) at the greeter's place in half-size cells; without
+#   that font the greeter's logo where it fits, the fitted copy where it does
+#   not; no takeover glyph. The next layout on a framebuffer loads a whole
+#   font back, and the console is cleared when the VGA console goes.
 # - A UEFI framebuffer still behind the dummy console: an invisible full stop
 #   first, then the layout for the size fbcon takes the console over at.
 # - The font: 32 px from 1852x800 up, so 1920x1080 gets it and 1366x768,
@@ -93,6 +96,58 @@ check "VGA text: recorded as laid out on no framebuffer" "$(cat "$work/run/conso
 # A console narrower than the greeter's logo gets the fitted copy at column 1.
 size 25 11; out=$(draw)
 expect "11 columns: the fitted logo at column 1" "$out" '^[[10;1H' 'LOGO   '
+
+# The half-size logo in its font: 6 cells by 2 rows here. Its frame is the
+# greeter's in half-size cells, so it starts on row (25-2-2)/2+1 = 11, at
+# column (80-6)/2+1 = 38; the font is loaded first and the console marked.
+vga=$'\uE000\uE001\uE002\uE003\uE004\uE005'
+printf '%s\n' "$vga" "$vga" >"$work/logo/vga.txt"
+echo 6 >"$work/logo/vga.cols"
+: >"$work/logo/vga.psf"
+fb none; size 25 80; out=$(draw)
+check "VGA font: the logo's font is loaded" "$(setfont_calls)" "setfont -C $work/tty $work/logo/vga.psf"
+expect "VGA font: the half-size logo on rows 11-12 at column 38" "$out" '^[[11;38H' '^[[12;38H'
+if [[ -e $work/run/console-logo-vga ]]; then ok "VGA font: the console is marked as having the logo's font"; else fail "VGA font: no console-logo-vga marker"; fi
+# The next layout, on a framebuffer, loads no font for 8x16: the VGA logo's
+# font maps the blocks where the kernel's default font has them.
+fb 1280 800 i915drmfb; size 50 160; out=$(draw)
+check "after the VGA font: no font loaded on a 1280x800 framebuffer" "$(setfont_calls)" ""
+expect "after the VGA font: the greeter's logo on rows 22-24 at column 75" "$out" '^[[22;75H'
+if [[ -e $work/run/console-logo-vga ]]; then fail "after the VGA font: the marker stayed"; else ok "after the VGA font: the marker goes"; fi
+# A font that does not load leaves the full-size logo.
+cat >"$work/bin/setfont-fail" <<'EOS'
+#!/bin/bash
+[[ $* == *vga.psf ]] && exit 1
+exit 0
+EOS
+chmod 755 "$work/bin/setfont-fail"; mv "$work/bin/setfont" "$work/bin/setfont-ok"; mv "$work/bin/setfont-fail" "$work/bin/setfont"
+fb none; size 25 80; out=$(draw)
+expect "VGA font that does not load: the greeter's logo at full size, rows 10-12 at column 35" "$out" '^[[10;35H'
+if [[ -e $work/run/console-logo-vga ]]; then fail "VGA font that does not load: marked anyway"; else ok "VGA font that does not load: not marked"; fi
+mv "$work/bin/setfont" "$work/bin/setfont-fail"; mv "$work/bin/setfont-ok" "$work/bin/setfont"
+
+# omarchy_console_vga_watch: clears the console once the VGA console is no
+# longer a console driver, and only while the VGA logo is up.
+export OMARCHY_VTCONSOLE="$work/vtconsole"
+mkdir -p "$work/vtconsole/vtcon0"; echo "(S) VGA+" >"$work/vtconsole/vtcon0/name"
+fb none; size 25 80; draw >/dev/null; : >"$work/tty"
+omarchy_console_vga_watch 40 &
+watcher=$!
+sleep 0.3
+check "VGA watch: nothing while the VGA console is there" "$(cat -v "$work/tty")" ""
+echo "(S) dummy device" >"$work/vtconsole/vtcon0/name"
+wait "$watcher"
+check "VGA watch: the console cleared when it goes" "$(cat -v "$work/tty")" '^[[2J'
+# fbcon has the console already (no longer 80x25): a layout is on its way,
+# and a clear would wipe it.
+: >"$work/run/console-logo-vga"; size 50 160; : >"$work/tty"
+omarchy_console_vga_watch 4
+check "VGA watch: no clear once fbcon has the console" "$(cat -v "$work/tty")" ""
+size 25 80
+rm -f "$work/run/console-logo-vga"; echo "(S) dummy device" >"$work/vtconsole/vtcon0/name"; : >"$work/tty"
+omarchy_console_vga_watch 4
+check "VGA watch: nothing without the VGA logo" "$(cat -v "$work/tty")" ""
+rm -f "$work/logo/vga.txt" "$work/logo/vga.cols" "$work/logo/vga.psf"
 
 # UEFI at 1920x1080: the dummy console's 80x25 until something is written.
 # The takeover glyph goes out first; fbcon then makes it 240x67 (a tenth of a
@@ -191,6 +246,58 @@ check "redraw --wait: nothing once the installer has tty1" "$(cat -v "$work/tty"
 rm -f "$work/run/tty1-taken"; fb none; : >"$work/tty"
 OMARCHY_REDRAW_WAIT_STEPS=4 "$REDRAW" --wait
 check "redraw --wait: gives up when no framebuffer comes" "$(cat -v "$work/tty")" ""
+# With the VGA logo up, it clears the console as soon as the VGA console
+# goes, then lays the logo out on the framebuffer that comes, in a whole font.
+echo none >"$work/run/console-logo"; : >"$work/run/console-logo-vga"; : >"$work/tty"
+echo "(S) VGA+" >"$work/vtconsole/vtcon0/name"; fb none; size 25 80
+OMARCHY_REDRAW_WAIT_STEPS=60 "$REDRAW" --wait &
+waiter=$!
+sleep 0.3
+echo "(S) dummy device" >"$work/vtconsole/vtcon0/name"
+sleep 0.3
+check "redraw --wait: clears the console when the VGA console goes" "$(cat -v "$work/tty")" '^[[2J'
+rm -f "$work/setfont.log"; size 50 160; fb 1280 800 amdgpudrmfb
+wait "$waiter"
+expect "redraw --wait: then the logo for the framebuffer, rows 22-24 at column 75" "$(cat -v "$work/tty")" '^[[2J' '^[[22;75H'
+check "redraw --wait: in the kernel's font, none loaded" "$(setfont_calls)" ""
+
+# --before-driver: udev, for a display controller before its driver loads.
+# While the VGA logo is up it clears the console if a driver will load, and
+# leaves it alone when one is bound already, none exists, or no VGA logo is up.
+mkdir -p "$work/sysfs/devices/pci0000:00/0000:00:02.0"
+cat >"$work/bin/modprobe" <<'EOS'
+#!/bin/bash
+[[ $* == *pci:v00001234* ]] && echo "insmod /lib/modules/x/kernel/drivers/gpu/drm/tiny/bochs.ko.zst"
+exit 0
+EOS
+chmod 755 "$work/bin/modprobe"
+before() {
+  : >"$work/tty"
+  OMARCHY_SYSFS="$work/sysfs" DEVPATH=/devices/pci0000:00/0000:00:02.0 MODALIAS=$1 "$REDRAW" --before-driver
+  cat -v "$work/tty"
+}
+rm -f "$work/run/tty1-taken"; : >"$work/run/console-logo-vga"; size 25 80
+check "before a driver: the console cleared when one will load" "$(before pci:v00001234d00001111sv0bc03sc00i00)" '^[[2J'
+size 50 160
+check "before a driver: no clear on a console another driver has already" "$(before pci:v00001234d00001111sv0bc03sc00i00)" ""
+size 25 80
+check "before a driver: nothing when none exists for the device" "$(before pci:v0000ABCDd00000001sv0bc03sc00i00)" ""
+mkdir -p "$work/sysfs/devices/pci0000:00/0000:00:02.0/driver"
+check "before a driver: nothing when one is bound already" "$(before pci:v00001234d00001111sv0bc03sc00i00)" ""
+rmdir "$work/sysfs/devices/pci0000:00/0000:00:02.0/driver"; rm -f "$work/run/console-logo-vga"
+check "before a driver: nothing without the VGA logo up" "$(before pci:v00001234d00001111sv0bc03sc00i00)" ""
+
+# One layout at a time: a redraw waits for one in progress (the lock), then
+# finds the logo laid out on this framebuffer and draws nothing.
+rm -f "$work/run/tty1-taken" "$work/run/console-logo-vga"; echo none >"$work/run/console-logo"
+fb 1280 800 i915drmfb; size 50 160; : >"$work/tty"
+( flock 9; sleep 0.5; echo i915drmfb >"$work/run/console-logo" ) 9>>"$work/run/console-logo.lock" &
+holder=$!
+sleep 0.1
+start=$(date +%s%N); "$REDRAW"; took=$(( ($(date +%s%N) - start) / 1000000 ))
+wait "$holder"
+if (( took >= 300 )); then ok "redraw: waits for a layout in progress (${took} ms)"; else fail "redraw: did not wait for the lock (${took} ms)"; fi
+check "redraw: then finds the logo laid out on this framebuffer and draws nothing" "$(cat -v "$work/tty")" ""
 
 # No logo files: nothing drawn, no error.
 export OMARCHY_CONSOLE_LOGO_DIR="$work/missing"

@@ -27,8 +27,17 @@
 #   and 32 px would leave the greeter fewer than its 81 columns. The greeter
 #   and the install dashboard load their font by the same rule
 #   (i18n_console_font).
-# - The logo: the greeter's own (81 columns) where it fits, the copy fitted
-#   to 80 columns (omarchy-console-logo) on the VGA text console.
+# - The logo: the greeter's own (81 columns) on a framebuffer console, the
+#   copy fitted to 80 columns (omarchy-console-logo) where that is narrower.
+#   The VGA text console's cells are 9x16 pixels of a 720x400 picture
+#   stretched over the panel, twice a framebuffer console's 8x16 on a
+#   1280x800 one, so there the logo is drawn at half size in a font of its
+#   own (vga-logo-font.py: each cell a 2x4 piece of its pixel grid), which
+#   puts it at the greeter's size and place. A GPU driver taking the console
+#   over draws its cells in the kernel's default font, where those pieces are
+#   box drawing: omarchy_console_vga_watch clears the console when the VGA
+#   console goes. The font is CP437 otherwise, like the kernel's, so the
+#   greeter's logo needs no font loaded on the driver's console.
 #
 # The paths are variables for the unit test (test/unit/console-logo-hook-test.sh).
 
@@ -39,12 +48,41 @@ omarchy_console_size() {
 
 # omarchy_console_takeover: on a framebuffer still behind the dummy console,
 # write a full stop in black on black so fbcon takes the console over, and
-# give the takeover, which runs from a workqueue, half a second.
+# give the takeover two seconds: on UEFI it runs from a workqueue as soon as
+# something is written, and a GPU driver taking over from the VGA console has
+# its framebuffer in sysfs before the modeset of fbcon's takeover is done
+# (in QEMU under load, longer than half a second).
 omarchy_console_takeover() {
     local tty="${OMARCHY_TTY:-/dev/tty1}" fb="${OMARCHY_FB:-/sys/class/graphics/fb0}" i=0
     [ -e "$fb" ] && [ "$(omarchy_console_size)" = "25 80 " ] || return 0
     printf '\033[30;40m.\033[0m\r' 2>/dev/null >>"$tty"
-    while [ "$i" -lt 10 ] && [ "$(omarchy_console_size)" = "25 80 " ]; do
+    while [ "$i" -lt 40 ] && [ "$(omarchy_console_size)" = "25 80 " ]; do
+        sleep 0.05
+        i=$((i + 1))
+    done
+}
+
+# omarchy_console_vga_bound: the VGA text console (vgacon) is still a console
+# driver; a GPU driver unregisters it when it takes the hardware over.
+omarchy_console_vga_bound() {
+    grep -qs 'VGA' "${OMARCHY_VTCONSOLE:-/sys/class/vtconsole}"/vtcon*/name
+}
+
+# omarchy_console_vga_watch [STEPS]: while the half-size logo is up in its own
+# font, clear tty1 as soon as the VGA console is gone, before fbcon shows its
+# lines; a GPU driver's modeset leaves the screen dark in between. Only while
+# the console is still the dummy one the driver put in its place (80x25): it
+# shows nothing, and no layout can come before fbcon has the console. Once
+# fbcon has it, a layout is on its way and a clear would wipe it. Polls every
+# 0.05 s, STEPS times at most (default 200), and stops early once the
+# initramfs is gone (the paths with it) or the installer has tty1.
+omarchy_console_vga_watch() {
+    local tty="${OMARCHY_TTY:-/dev/tty1}" run="${OMARCHY_RUN_DIR:-/run/omarchy-iso}" i=0
+    while [ "$i" -lt "${1:-200}" ] && [ -e "$run/console-logo-vga" ] && [ ! -e "$run/tty1-taken" ]; do
+        if [ -d "${OMARCHY_VTCONSOLE:-/sys/class/vtconsole}" ] && ! omarchy_console_vga_bound; then
+            [ "$(omarchy_console_size)" = "25 80 " ] && printf '\033[2J' 2>/dev/null >>"$tty"
+            return 0
+        fi
         sleep 0.05
         i=$((i + 1))
     done
@@ -65,10 +103,18 @@ omarchy_console_logo() {
     local tty="${OMARCHY_TTY:-/dev/tty1}" fb="${OMARCHY_FB:-/sys/class/graphics/fb0}"
     local dir="${OMARCHY_CONSOLE_LOGO_DIR:-/usr/share/omarchy-iso/console-logo}"
     local share="${OMARCHY_ISO_SHARE:-/usr/share/omarchy-iso}" run="${OMARCHY_RUN_DIR:-/run/omarchy-iso}"
-    local logo rows cols logo_rows logo_cols top left row line fb_name=none
+    local logo rows cols logo_rows logo_cols top left row line fb_name=none size frame=4
     [ -e "$tty" ] || return 0
     omarchy_console_takeover
-    if [ "$(omarchy_console_font_size)" = 32 ] && [ -r "$share/console-32.psf" ]; then
+    size=$(omarchy_console_font_size)
+    logo=greeter
+    if [ ! -e "$fb" ]; then
+        # The VGA text console: the half-size logo, in its font.
+        if [ -r "$dir/vga.psf" ] && [ -r "$dir/vga.txt" ] && setfont -C "$tty" "$dir/vga.psf" 2>/dev/null; then
+            logo=vga
+            frame=2
+        fi
+    elif [ "$size" = 32 ] && [ -r "$share/console-32.psf" ]; then
         setfont -C "$tty" "$share/console-32.psf" 2>/dev/null
     fi
     # shellcheck disable=SC2046 # rows and columns, two words
@@ -78,16 +124,21 @@ omarchy_console_logo() {
 
     # The widths come from the generator's sidecars: busybox's awk and wc
     # count bytes, and the block glyphs are three each.
-    logo=greeter
-    logo_cols=$(cat "$dir/greeter.cols" 2>/dev/null)
-    if [ ! -r "$dir/greeter.txt" ] || ! [ "${logo_cols:-0}" -gt 0 ] 2>/dev/null || [ "$cols" -lt "$logo_cols" ]; then
-        logo=fitted
-        logo_cols=$(cat "$dir/fitted.cols" 2>/dev/null)
-        [ "${logo_cols:-0}" -gt 0 ] 2>/dev/null || logo_cols=80
+    if [ "$logo" = vga ]; then
+        logo_cols=$(cat "$dir/vga.cols" 2>/dev/null)
+    else
+        logo_cols=$(cat "$dir/greeter.cols" 2>/dev/null)
+        if [ ! -r "$dir/greeter.txt" ] || ! [ "${logo_cols:-0}" -gt 0 ] 2>/dev/null || [ "$cols" -lt "$logo_cols" ]; then
+            logo=fitted
+            logo_cols=$(cat "$dir/fitted.cols" 2>/dev/null)
+        fi
     fi
+    [ "${logo_cols:-0}" -gt 0 ] 2>/dev/null || logo_cols=80
     [ -r "$dir/$logo.txt" ] || return 0
     logo_rows=$(wc -l <"$dir/$logo.txt")
-    top=$(((rows - logo_rows - 4) / 2 + 1))
+    # The greeter's frame: logo, blank, tagline, blank, hint; in half-size
+    # cells those four lines are two.
+    top=$(((rows - logo_rows - frame) / 2 + 1))
     [ "$top" -lt 1 ] && top=1
     left=$(((cols - logo_cols) / 2 + 1))
     [ "$left" -lt 1 ] && left=1
@@ -104,8 +155,16 @@ omarchy_console_logo() {
 
     # Which framebuffer the logo is laid out for: omarchy-console-logo-redraw
     # compares it, and .automated_script.sh leaves the logo up while it exists.
+    # console-logo-vga: the console has the VGA logo's font.
     [ -r "$fb/name" ] && read -r fb_name <"$fb/name"
-    mkdir -p "$run" 2>/dev/null && echo "$fb_name" 2>/dev/null >"$run/console-logo"
+    if mkdir -p "$run" 2>/dev/null; then
+        echo "$fb_name" 2>/dev/null >"$run/console-logo"
+        if [ "$logo" = vga ]; then
+            : 2>/dev/null >"$run/console-logo-vga"
+        else
+            rm -f "$run/console-logo-vga"
+        fi
+    fi
     [ -w /dev/kmsg ] && echo "omarchy-logo: ${cols}x$rows on $fb_name, $logo logo at row $top column $left" 2>/dev/null >/dev/kmsg
     return 0
 }
