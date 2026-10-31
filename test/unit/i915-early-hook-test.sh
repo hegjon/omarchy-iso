@@ -81,6 +81,12 @@ rm -f "$work/run/i915-loading"; : >"$work/init"
 run_latehook; wait
 if [[ -e $work/chroot.log ]]; then fail "run_latehook ran without a helper in the new root"; else ok "run_latehook does nothing without the helper in the new root"; fi
 rm -f "$work/run/i915-loading"
+# The half-size VGA logo alone starts it too: a GPU driver from the live
+# root will take the VGA console away.
+printf '#!/bin/bash\n' >"$helper"; chmod 755 "$helper"; : >"$work/run/console-logo-vga"; rm -f "$work/chroot.log"
+run_latehook; wait
+if [[ $(cat "$work/chroot.log" 2>/dev/null) == "$want" ]]; then ok "run_latehook starts the helper while the VGA logo is up"; else fail "run_latehook with the VGA logo up ran: $(cat "$work/chroot.log" 2>/dev/null)"; fi
+rm -f "$work/run/console-logo-vga" "$work/chroot.log"
 bus; device 0000:00:02.0 8086 1916 030000
 run_hook; wait
 if [[ -e $work/run/i915-loading ]]; then fail "a Skylake GPU got the marker"; else ok "no marker where i915 is not loaded early"; fi

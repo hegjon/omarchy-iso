@@ -53,8 +53,12 @@ set_tokyo_night_colors() {
   echo -en "\e]PFc0caf5"
   echo -en "\033[0m"
   # The boot logo stays up until the greeter draws over it in place
-  # (/usr/share/omarchy-iso/console-logo.sh) rather than a blank screen.
-  [[ -e /run/omarchy-iso/console-logo ]] || clear
+  # (/usr/share/omarchy-iso/console-logo.sh) rather than a blank screen; not
+  # the VGA console's half-size one, still up where no framebuffer came, whose
+  # glyphs the greeter's font does not have.
+  if [[ ! -e /run/omarchy-iso/console-logo || -e /run/omarchy-iso/console-logo-vga ]]; then
+    clear
+  fi
 }
 set_tokyo_night_colors
 

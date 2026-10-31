@@ -61,10 +61,14 @@ run_hook() {
 # starts now, inside the new root: switch_root moves /dev, /sys and /run in
 # under it, and it lays the logo out as soon as the panel's framebuffer is
 # there. It is done within seconds and needs nothing from the initramfs.
+# It also starts while the half-size VGA logo is up (console-logo.sh): a GPU
+# driver loading from the live root takes the VGA console away, and the
+# helper clears the console before fbcon shows that logo's glyphs.
 run_latehook() {
     local run=${OMARCHY_RUN_DIR:-/run/omarchy-iso} root=${OMARCHY_SYSROOT:-/sysroot}
     local helper=/usr/local/bin/omarchy-console-logo-redraw
-    [ -e "$run/i915-loading" ] && [ -x "$root$helper" ] || return 0
+    [ -e "$run/i915-loading" ] || [ -e "$run/console-logo-vga" ] || return 0
+    [ -x "$root$helper" ] || return 0
     chroot "$root" /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bin "$helper" --wait \
         </dev/null >/dev/null 2>&1 &
 }

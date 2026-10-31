@@ -26,6 +26,18 @@ build() {
         warning "console-font.py could not build the 32 px console font: the boot logo keeps the kernel's font"
     fi
     rm -f "$tmp"
+    # The half-size logo for the VGA text console, in a font of its own
+    # (vga-logo-font.py): ASCII from the kernel's default font, plus the pieces.
+    tmp=$(mktemp -d)
+    if python3 "$share/vga-logo-font.py" /usr/share/omarchy/logo.txt \
+        /usr/share/kbd/consolefonts/default8x16.psfu.gz "$tmp" >/dev/null 2>&1; then
+        for file in vga.psf vga.txt vga.cols; do
+            add_file "$tmp/$file" "$dir/$file" 644
+        done
+    else
+        warning "vga-logo-font.py could not build the VGA logo: a BIOS boot shows the logo at full width"
+    fi
+    rm -rf "$tmp"
     add_runscript
 }
 
