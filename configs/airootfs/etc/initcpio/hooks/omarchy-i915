@@ -30,16 +30,41 @@ omarchy_i915_wanted() {
 }
 
 run_hook() {
+    local run=${OMARCHY_RUN_DIR:-/run/omarchy-iso} init=${OMARCHY_INIT:-/init}
     omarchy_i915_wanted || return 0
     # In the background: the probe takes seconds on an old panel, and udev's
     # hook waits for the install medium meanwhile. Then lay the logo out
     # again for the panel's console (console-logo.sh), unless the live root
-    # has taken over by then: getty or the installer may have tty1.
+    # has taken over by then: run_latehook hands that case to the live root,
+    # whose helper also clears the marker. switch_root deletes the
+    # initramfs's programs, so after it this runs builtins only, and its
+    # errors go nowhere: they would land on the console.
+    mkdir -p "$run" && : >"$run/i915-loading"
     (
-        modprobe i915 2>/dev/null || exit 0
-        [ -e /init ] && [ -r /usr/share/omarchy-iso/console-logo.sh ] || exit 0
+        modprobe i915
+        status=$?
+        [ -e "$init" ] || exit 0
+        rm -f "$run/i915-loading"
+        [ "$status" = 0 ] && [ -r /usr/share/omarchy-iso/console-logo.sh ] || exit 0
         # shellcheck source=/dev/null
         . /usr/share/omarchy-iso/console-logo.sh
         omarchy_console_logo
-    ) &
+    ) 2>/dev/null &
+}
+
+# The initramfs can be done before i915 is: on a ThinkPad X200 switch_root
+# comes 3.1 s after the kernel starts and the panel's console 4.1 s, and the
+# background job above finds the initramfs gone. fbcon then shows the VGA
+# console's lines at the top left of the panel, and udev's redraw in the live
+# root (omarchy-console-logo-redraw) runs only at its coldplug, 7.8 s here.
+# So when i915 is still loading at this point, the live root's redraw helper
+# starts now, inside the new root: switch_root moves /dev, /sys and /run in
+# under it, and it lays the logo out as soon as the panel's framebuffer is
+# there. It is done within seconds and needs nothing from the initramfs.
+run_latehook() {
+    local run=${OMARCHY_RUN_DIR:-/run/omarchy-iso} root=${OMARCHY_SYSROOT:-/sysroot}
+    local helper=/usr/local/bin/omarchy-console-logo-redraw
+    [ -e "$run/i915-loading" ] && [ -x "$root$helper" ] || return 0
+    chroot "$root" /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bin "$helper" --wait \
+        </dev/null >/dev/null 2>&1 &
 }
