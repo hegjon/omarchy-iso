@@ -10,6 +10,10 @@
 #   - COLUMNS/LINES so gum picks up real terminal size
 set -euo pipefail
 
+# A shutdown hangs tty1 up: leave quietly, so the login shell has no job to
+# report over the screen (omarchy-shutdown-notice writes there next).
+trap 'exit 0' HUP TERM
+
 [[ $(tty) == /dev/tty1 ]] || exit 0
 
 # The boot logo stays up, and is laid out again when a GPU driver replaces the

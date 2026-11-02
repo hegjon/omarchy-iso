@@ -6,6 +6,8 @@
 build() {
     local share=/usr/share/omarchy-iso dir=/usr/share/omarchy-iso/console-logo file tmp size
     add_file "$share/console-logo.sh"
+    # hooks/omarchy-logo sends the kernel's messages to tty12.
+    add_binary setlogcons
     # The greeter's logo and the copy fitted to 80 columns, with their widths
     # (omarchy-console-logo, run by 60-omarchy-live-logo.hook during the
     # pacstrap, ahead of this).

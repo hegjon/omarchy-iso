@@ -55,6 +55,7 @@ file_permissions=(
   ["/usr/local/bin/choose-mirror"]="0:0:755"
   ["/usr/local/bin/omarchy-console-logo"]="0:0:755"
   ["/usr/local/bin/omarchy-console-logo-redraw"]="0:0:755"
+  ["/usr/local/bin/omarchy-shutdown-notice"]="0:0:755"
   ["/usr/local/bin/omarchy-cidata-load"]="0:0:755"
   ["/usr/local/bin/omarchy-wait-root-image-verify"]="0:0:755"
   ["/usr/local/bin/omarchy-image-write"]="0:0:755"

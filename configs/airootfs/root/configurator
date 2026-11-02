@@ -227,11 +227,17 @@ greeter_vga() {
   omarchy_console_layout "$top" "$left" "$rows" "$cols" "$logo_cols" "$dir/vga.txt"
   printf '\033[0m\033[%d;%dH%s' "$((top + logo_rows + 1))" "$(((cols - ${#tagline}) / 2 + 1))" "$tagline"
   printf '\033[%d;%dH\033[2m%s\033[0m' "$((top + logo_rows + 3))" "$(((cols - ${#hint}) / 2 + 1))" "$hint"
+  # Until a Return, a shutdown's notice takes the tagline's place (omarchy-shutdown-notice).
+  echo "$((top + logo_rows + 1)) $((top + logo_rows + 3))" >"$dir/greeter-rows" 2>/dev/null || true
   systemctl start --no-block omarchy-medium-verify.target 2>/dev/null || true
   local status
   while :; do
-    IFS= read -r -t 0.5 _ </dev/tty && break
-    status=$?
+    status=0
+    IFS= read -r -t 0.5 _ </dev/tty || status=$?
+    if (( status == 0 )); then
+      rm -f "$dir/greeter-rows"
+      break
+    fi
     # Not a timeout: no terminal to read (the Return can not come).
     (( status > 128 )) || break
     if [[ -e ${OMARCHY_FB:-/sys/class/graphics/fb0} ]]; then
@@ -306,6 +312,8 @@ greeter() {
   hint="Press Return to Start Install"
   hpad=$(((cols - ${#hint}) / 2)); (( hpad < 0 )) && hpad=0
   printf '\033[%d;%dH\033[2m%s\033[0m' "$hint_row" "$((hpad + 1))" "$hint"
+  # Until a Return, a shutdown's notice takes the tagline's place (omarchy-shutdown-notice).
+  echo "$tagline_row $hint_row" >"${OMARCHY_RUN_DIR:-/run/omarchy-iso}/greeter-rows" 2>/dev/null || true
 
   # ColorShift the logo: a green base (indexed color 2) with a cyan accent (6)
   # drifting through, settling on green. Indexed ANSI colors, not hex — the
@@ -352,7 +360,8 @@ greeter() {
   # ran came off the same stick and they would have slowed it down.
   systemctl start --no-block omarchy-medium-verify.target 2>/dev/null || true
 
-  IFS= read -r _ </dev/tty || true
+  # A hangup (a shutdown) fails the read: the greeter's rows stay for the notice.
+  IFS= read -r _ </dev/tty && rm -f "${OMARCHY_RUN_DIR:-/run/omarchy-iso}/greeter-rows" || true
   # Tolerate ttfx's kill signal in `wait` so a future `set -e` here can't abort.
   if [[ -n $anim ]]; then
     kill "$anim" 2>/dev/null

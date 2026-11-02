@@ -5,6 +5,11 @@
 # initramfs, getty@tty1 keeps the VT (TTYVTDisallocate=no), and
 # .automated_script.sh leaves the logo up until the greeter draws over it.
 run_earlyhook() {
+    # The kernel's messages to tty12, from here to the reboot: the ones the
+    # quiet boot still prints (critical ones, a watchdog's on the way down)
+    # landed over the logo and the greeter. The redirect needs the VT to
+    # exist: opening it makes it.
+    : >/dev/tty12 2>/dev/null && setlogcons 12 >/dev/null 2>&1
     [ -r /usr/share/omarchy-iso/console-logo.sh ] || return 0
     # shellcheck source=/dev/null
     . /usr/share/omarchy-iso/console-logo.sh
