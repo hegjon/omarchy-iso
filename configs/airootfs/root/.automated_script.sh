@@ -14,6 +14,14 @@ set -euo pipefail
 # report over the screen (omarchy-shutdown-notice writes there next).
 trap 'exit 0' HUP TERM
 
+# Nor may this script report over it. The shutdown's SIGTERM kills the
+# configurator or the dashboard too, and bash reports a foreground command's
+# death by a signal on its own stderr, trap or not, before it runs the trap
+# ("... Terminated ./configurator", under the logo). Those two run with the
+# tty as their stderr, as before; the report goes to tty12, with the kernel's
+# messages.
+on_tty() { "$@" 2>/dev/tty; } 2>/dev/tty12
+
 [[ $(tty) == /dev/tty1 ]] || exit 0
 
 # The boot logo stays up, and is laid out again when a GPU driver replaces the
@@ -178,7 +186,7 @@ if /usr/local/bin/omarchy-cidata-load; then
   # warm_offline_mirror above and omarchy-medium-verify.target).
   systemctl start --no-block omarchy-medium-verify.target 2>/dev/null || true
 else
-  ./configurator
+  on_tty ./configurator
 fi
 
 # Deferred-provisioning installs skip the celebration/reboot prompt and reboot on
@@ -201,7 +209,7 @@ export OMARCHY_ISO_LANGUAGE
 # completion, then renders the final installed-time/reboot prompt itself.
 export OMARCHY_DASHBOARD_TTY="$(tty)"
 rm -f /run/omarchy-install/state.json
-/usr/local/bin/omarchy-install-dashboard \
+on_tty /usr/local/bin/omarchy-install-dashboard \
   "$OMARCHY_INSTALL_LOG_FILE" \
   /run/omarchy-install/state.json \
   -- \

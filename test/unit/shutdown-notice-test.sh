@@ -6,7 +6,8 @@
 # while the greeter is up and alone on a cleared screen otherwise, and leaves
 # the cursor off that row; when getty stops for anything else it writes
 # nothing. Runs it against a file in place of tty1, with systemctl and stty
-# stubbed.
+# stubbed. Nor does .automated_script.sh report the configurator's death by
+# the shutdown's SIGTERM there: its on_tty, run the same way.
 
 set -euo pipefail
 
@@ -50,5 +51,22 @@ out=$(notice stopping "1 reboot.target start waiting")
 [[ $out == *'^[[H^[[2J^[[25;75HRebooting...^[[27;1H' ]] &&
   ok "no greeter up: the screen cleared, the notice centred, the cursor two rows under it" ||
   fail "no greeter: $out"
+
+# The shutdown's SIGTERM reaches the configurator and .automated_script.sh at
+# once: the configurator's stderr stays on the tty, bash's "Terminated" report
+# goes to tty12, and the script leaves through its trap.
+on_tty=$(grep -m1 '^on_tty() ' "$ROOT/configs/airootfs/root/.automated_script.sh") ||
+  fail "on_tty is gone from .automated_script.sh"
+on_tty=${on_tty//\/dev\/tty12/$work/tty12}
+on_tty=${on_tty//\/dev\/tty/$work/tty1}
+: >"$work/tty1"; : >"$work/tty12"
+status=0
+bash -c 'set -euo pipefail; trap "exit 0" HUP TERM; eval "$1"
+  on_tty bash -c "echo configurator >&2; kill -TERM \$PPID \$\$"; echo after >&2' _ "$on_tty" \
+  2>>"$work/tty1" || status=$?
+tty1=$(<"$work/tty1") tty12=$(<"$work/tty12")
+[[ $status == 0 && $tty1 == configurator && $tty12 == *Terminated* ]] &&
+  ok "a configurator killed by the shutdown: its stderr on tty1, bash's report on tty12" ||
+  fail "configurator killed: exit $status, tty1 '$tty1', tty12 '$tty12'"
 
 exit "$((failures > 0))"
