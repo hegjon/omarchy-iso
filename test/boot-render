@@ -19,7 +19,11 @@ each one:
   greeter only the tagline and hint, centred, on their rows;
 - no dark frames between the first logo and the greeter longer than
   --max-dark, and none after the greeter;
-- no text between the boot loader's last dark frame and the first logo.
+- no text between the boot loader's last dark frame and the first logo; a
+  boot menu GRUB draws in the mode the kernel keeps is the boot loader's
+  screen until GRUB boots (its "Booting `...'" on the serial console), and its
+  picture is after it, until the kernel draws, while nothing lights that the
+  menu did not show.
 
 Frames go to OUT/frames as PNG, named by their time since QEMU started and
 what they showed; OUT/report.txt has the timeline and the problems. Exit 0
@@ -587,9 +591,11 @@ def expected_place(frame: Frame, logos: list[Logo], g: Geometry) -> tuple[int, i
 
 
 def analyse(frames: list[tuple[float, Frame]], logos: list[Logo], max_dark: float,
-            samples: list[float] | None = None) -> tuple[list, list[str], dict]:
+            samples: list[float] | None = None, booted: float | None = None) -> tuple[list, list[str], dict]:
     """Classify each frame and judge the boot: (rows, problems, summary).
-    samples: the time of every screen sample, changed or not (samples.txt)."""
+    samples: the time of every screen sample, changed or not (samples.txt).
+    booted: when the boot loader booted the kernel, as its serial console
+    told (boot-menu.txt), where it shows a menu."""
     rows = [(t, frame, classify(frame, logos)) for t, frame in frames]
     problems: list[str] = []
 
@@ -642,9 +648,19 @@ def analyse(frames: list[tuple[float, Frame]], logos: list[Logo], max_dark: floa
         if v.kind in ("black", "blank", "speck") or (frame.width, frame.height) != (first_frame.width, first_frame.height):
             break
         start -= 1
+    # A boot menu in the logo's mode (GRUB's, themed, with gfxpayload=keep):
+    # the boot loader's screen until it boots, and its last picture after,
+    # without the entries, until the kernel draws over it.
+    menu = max((j for j in range(len(rows)) if rows[j][0] < booted), default=None) if booted is not None else None
     for i in range(start, first):
         t, frame, v = rows[i]
         if v.kind != "text":
+            continue
+        if booted is not None and t < booted:
+            continue
+        if menu is not None and (rows[menu][1].width, rows[menu][1].height) == (frame.width, frame.height) \
+                and lit_only(frame, rows[menu][1]) is None:
+            summary.setdefault("notes", []).append(f"{t:.2f} the boot menu's picture until the kernel draws")
             continue
         before = rows[start - 1][1] if start > 0 else None
         if i == start and before is not None and (before.width, before.height) != (frame.width, frame.height) \
@@ -928,11 +944,16 @@ def run_qemu(args, out: Path, logos: list[Logo]) -> list[tuple[float, Path]]:
     t0 = time.time()
     sampler = subprocess.Popen([sys.executable, "-I", "-c", SAMPLER, str(screen_qmp), str(raw), str(args.fps), str(t0)])
     seen: set[str] = set()
-    greeter_at = None
+    greeter_at = booted = None
     try:
         while time.time() - t0 < args.timeout:
             if qemu.poll() is not None:
                 raise SystemExit(f"QEMU exited: {(out / 'qemu.log').read_text()[-400:]}")
+            # GRUB's last words on the serial console as it boots a menu entry;
+            # the file's time is theirs, closer than this loop's 0.2 s.
+            if booted is None and (out / "serial.log").exists() and b"Booting `" in (out / "serial.log").read_bytes():
+                booted = (out / "serial.log").stat().st_mtime - t0
+                (out / "boot-menu.txt").write_text(f"{booted:.3f}\n")
             for path in sorted(raw.glob("0*.ppm")):
                 if path.name in seen:
                     continue
@@ -1020,7 +1041,8 @@ def main() -> int:
         print("no frames", file=sys.stderr)
         return 2
     samples = [float(line) for line in (out / "samples.txt").read_text().split()] if (out / "samples.txt").exists() else None
-    rows, problems, summary = analyse(frames, logos, args.max_dark, samples)
+    booted = float((out / "boot-menu.txt").read_text()) if (out / "boot-menu.txt").exists() else None
+    rows, problems, summary = analyse(frames, logos, args.max_dark, samples, booted)
     print(report(out, rows, problems, summary), end="")
     print(f"frames and report: {out}")
     if summary.get("samples a second", MIN_FPS) < MIN_FPS:

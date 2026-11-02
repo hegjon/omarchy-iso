@@ -248,8 +248,8 @@ class BootTest(unittest.TestCase):
     def setUp(self):
         self.logos = logos()
 
-    def analyse(self, frames, max_dark=0.5, samples=None):
-        rows, problems, summary = br.analyse(frames, self.logos, max_dark, samples)
+    def analyse(self, frames, max_dark=0.5, samples=None, booted=None):
+        rows, problems, summary = br.analyse(frames, self.logos, max_dark, samples, booted)
         return problems, summary
 
     def test_a_clean_boot(self):
@@ -296,6 +296,33 @@ class BootTest(unittest.TestCase):
         self.assertEqual(problems, [])
         problems, _ = self.analyse([(0.3, menu.frame()), (4.7, kernel.frame()), (5.0, boot_logo().frame()), (8.0, greeter().frame())])
         self.assertEqual(len(problems), 1, problems)
+
+    def menu_in_the_logos_mode(self, entries=True):
+        """A boot menu GRUB draws in the mode the kernel keeps: a picture and
+        its entries on the console's background, no dark frame after it."""
+        menu = Canvas(1280, 800)
+        menu.fill(140, 200, 1140, 420, GREEN)
+        if entries:
+            text(menu, "Install Omarchy", 72, 30, 8, 16)
+            text(menu, "Try Omarchy", 72, 31, 8, 16)
+        return menu
+
+    def test_a_boot_menu_in_the_logos_mode_is_the_boot_loaders_until_it_boots(self):
+        frames = [(3.0, self.menu_in_the_logos_mode().frame()), (6.2, self.menu_in_the_logos_mode(entries=False).frame()),
+                  (9.0, boot_logo().frame()), (12.0, greeter().frame())]
+        problems, _ = self.analyse(frames)
+        self.assertEqual(len(problems), 2, problems)
+        problems, summary = self.analyse(frames, booted=6.0)
+        self.assertEqual(problems, [])
+        self.assertIn("6.20 the boot menu's picture until the kernel draws", summary["notes"])
+
+    def test_text_the_boot_menu_did_not_show_after_it_booted_is_text_before_the_logo(self):
+        kernel = self.menu_in_the_logos_mode(entries=False)
+        text(kernel, "[    0.043205] RDSEED32 is broken.", 0, 0, 8, 16)
+        problems, _ = self.analyse([(3.0, self.menu_in_the_logos_mode().frame()), (6.2, kernel.frame()),
+                                    (9.0, boot_logo().frame()), (12.0, greeter().frame())], booted=6.0)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("6.20 text before the logo", problems[0].strip())
 
     def test_the_menu_s_video_memory_for_a_frame_as_the_text_mode_comes(self):
         menu = Canvas(640, 480, (0, 0, 0))
