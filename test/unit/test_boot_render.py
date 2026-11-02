@@ -324,6 +324,33 @@ class BootTest(unittest.TestCase):
         self.assertEqual(len(problems), 1, problems)
         self.assertIn("6.20 text before the logo", problems[0].strip())
 
+    def test_a_menu_that_shows_the_logo_is_the_boot_loaders_until_it_boots(self):
+        # menu.c32 on the text console with the logo as its first rows: the
+        # logo is up before the boot loader leaves the menu, its entries under
+        # it, and the loading screen redraws the logo without them.
+        menu = boot_logo()
+        text(menu, "Install Omarchy", 72, 30, 8, 16)
+        text(menu, "Try Omarchy", 73, 31, 8, 16)
+        # Its entries centred under the logo, as the greeter's lines are.
+        menu_like_greeter = greeter()
+        problems, summary = self.analyse([(1.0, menu_like_greeter.frame()), (4.2, boot_logo().frame()),
+                                          (8.0, greeter().frame())], booted=4.1)
+        self.assertEqual((problems, summary["greeter"]), ([], 8.0))
+        # Caught after the boot loader left the menu and before the loading
+        # screen replaced it, with the cursor menu.c32 turns on: still the menu.
+        cursor = greeter()
+        cursor.fill(0, 784, 8, 786, GREY)
+        problems, summary = self.analyse([(1.0, menu_like_greeter.frame()), (4.12, cursor.frame()),
+                                          (4.2, boot_logo().frame()), (8.0, greeter().frame())], booted=4.1)
+        self.assertEqual((problems, summary["greeter"], summary["first logo"]), ([], 8.0, 4.2))
+        frames = [(1.0, menu.frame()), (4.2, boot_logo().frame()), (8.0, greeter().frame())]
+        problems, _ = self.analyse(frames)
+        self.assertTrue(problems)
+        problems, summary = self.analyse(frames, booted=4.1)
+        self.assertEqual(problems, [])
+        self.assertEqual(summary["first logo"], 4.2)
+        self.assertEqual(summary["greeter"], 8.0)
+
     def test_the_menu_s_video_memory_for_a_frame_as_the_text_mode_comes(self):
         menu = Canvas(640, 480, (0, 0, 0))
         text(menu, "Omarchy install medium (x86_64, BIOS)", 10, 10, 8, 16)

@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+"""Write the BIOS boot menu's logo for menu.c32 from ISOLINUX's DISPLAY file.
+
+The BIOS boot menu (configs/syslinux/archiso_head.cfg) is menu.c32 on the VGA
+text console, in the logo's font (omarchy-logo.psf), and shows the logo
+where omarchy-logo.txt, the screen ISOLINUX shows while it loads the kernel,
+puts it: picking an entry then takes only the entries away. menu.c32 has no
+place for a picture or a block of text above its entries, so the logo's rows
+are entries of their own, disabled: menu.c32 draws the box's top border,
+title and separator on rows VSHIFT + 1 to 3 (black on black here) and the
+entries from VSHIFT + 4, an entry's text from column MARGIN + 3 (1-based).
+A blank row and the menu's own entries follow (archiso_sys-linux.cfg), with
+the messages menu.c32 shows (hidden) and the Tab command line below the box.
+bin/omarchy-isolinux-logo runs this after writing omarchy-logo.txt.
+
+Usage: bin/omarchy-isolinux-menu DISPLAY-FILE > omarchy-logo-menu.cfg
+"""
+import sys
+from pathlib import Path
+
+ENTRIES = 2  # Install and Try, in archiso_sys-linux.cfg
+
+
+def logo_rows(display: bytes) -> tuple[int, int, list[bytes]]:
+    """(0-based row, 0-based column, the rows from that column) of the logo in a DISPLAY file."""
+    lines = display.split(b"\r\n")
+    rows = [i for i, line in enumerate(lines) if any(b >= 0x80 for b in line)]
+    if not rows or rows != list(range(rows[0], rows[-1] + 1)):
+        raise SystemExit("no logo rows, or not one block of them, in the DISPLAY file")
+    logo = [lines[i] for i in rows]
+    col = min(len(line) - len(line.lstrip(b" ")) for line in logo)
+    return rows[0], col, [line[col:].rstrip(b" ") for line in logo]
+
+
+def menu(display: bytes) -> bytes:
+    row, col, logo = logo_rows(display)
+    vshift, margin, rows = row - 3, col - 2, len(logo) + 1 + ENTRIES
+    below = rows + 4  # rows from VSHIFT to the line under the box's bottom border
+    out = [
+        b"# The BIOS menu's logo, written by bin/omarchy-isolinux-menu from",
+        b"# omarchy-logo.txt (bin/omarchy-isolinux-logo runs it): menu.c32 draws it as",
+        b"# disabled entries in the logo's font, where omarchy-logo.txt puts it, so a",
+        b"# pick takes only the entries away. Do not edit; run bin/omarchy-isolinux-logo.",
+        b"MENU MARGIN %d" % margin,
+        b"MENU ROWS %d" % rows,
+        b"MENU VSHIFT %d" % vshift,
+        b"MENU TABMSGROW %d" % (below + 1),
+        b"MENU CMDLINEROW %d" % (below + 1),
+        b"MENU TIMEOUTROW %d" % (below + 2),
+        b"MENU HELPMSGROW %d" % (below + 3),
+        b"MENU HELPMSGENDROW %d" % (vshift + below + 3),
+        b"",
+    ]
+    for i, line in enumerate(logo):
+        out += [b"LABEL logo%d" % i, b"MENU LABEL " + line, b"MENU DISABLE", b""]
+    out += [b"MENU SEPARATOR", b""]
+    return b"\n".join(out)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        raise SystemExit(__doc__.rsplit("\n\n", 1)[1])
+    sys.stdout.buffer.write(menu(Path(sys.argv[1]).read_bytes()))

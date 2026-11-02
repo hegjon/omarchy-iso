@@ -76,28 +76,44 @@ class MenuEntries(unittest.TestCase):
         self.assertEqual(labels, ["Install Omarchy", "^Try Omarchy"])
         self.assertFalse((SYSLINUX / "archiso_tail.cfg").exists())
 
+    @staticmethod
+    def menu_params(*cfgs):
+        """menu.c32's numeric MENU settings after these configs, the later winning."""
+        params = {}
+        for cfg in cfgs:
+            for key, value in re.findall(rb"^MENU ([A-Z]+) (-?\d+)$", (SYSLINUX / cfg).read_bytes(), re.M):
+                params[key.decode()] = int(value)
+        return params
+
     def test_bios_entries_fit_the_menu(self):
-        head = (SYSLINUX / "archiso_head.cfg").read_text()
-        width = int(re.search(r"^MENU WIDTH (\d+)$", head, re.M).group(1))
-        margin = int(re.search(r"^MENU MARGIN (\d+)$", head, re.M).group(1))
-        labels = []
-        for cfg in ("archiso_sys-linux.cfg", "archiso_pxe-linux.cfg"):
-            labels += re.findall(r"^MENU LABEL (.+)$", (SYSLINUX / cfg).read_text(), re.M)
-        # menumain.c gives an entry width - 2 * margin - 4 columns; the PXE
-        # test finds its entry by "NBD".
-        for label in labels:
-            self.assertLessEqual(len(label.replace("^", "")), width - 2 * margin - 4, label)
+        # menumain.c gives an entry width - 2 * margin - 4 columns, and
+        # MENU INDENT puts spaces before its label; the PXE test finds its
+        # entry by "NBD". The install medium's menu takes its margin from the
+        # logo's rows (omarchy-logo-menu.cfg).
+        for cfgs, entries_cfg in ((("archiso_head.cfg", "omarchy-logo-menu.cfg"), "archiso_sys-linux.cfg"),
+                                  (("archiso_head.cfg",), "archiso_pxe-linux.cfg")):
+            params = self.menu_params(*cfgs)
+            room = params["WIDTH"] - 2 * params["MARGIN"] - 4
+            for block in re.split(r"^LABEL ", (SYSLINUX / entries_cfg).read_text(), flags=re.M)[1:]:
+                label = re.search(r"^MENU LABEL (.+)$", block, re.M)
+                indent = re.search(r"^MENU INDENT (\d+)$", block, re.M)
+                if label:
+                    used = len(label.group(1).replace("^", "")) + (int(indent.group(1)) if indent else 0)
+                    self.assertLessEqual(used, room, label.group(1))
 
     def test_bios_command_line_stays_on_screen(self):
-        head = (SYSLINUX / "archiso_head.cfg").read_text()
-        row = {key: int(re.search(rf"^MENU {key} (\d+)$", head, re.M).group(1))
-               for key in ("VSHIFT", "CMDLINEROW", "TABMSGROW", "HELPMSGROW", "HELPMSGENDROW")}
-        # vesamenu at 640x480 has 30 rows. menumain.c adds VSHIFT to the
-        # command line, tab message and help start rows, not to the help end.
-        for key in ("CMDLINEROW", "TABMSGROW", "HELPMSGROW"):
-            self.assertLess(row[key] + row["VSHIFT"], 30, key)
-        self.assertLess(row["HELPMSGENDROW"], 30)
-        self.assertGreaterEqual(row["HELPMSGENDROW"], row["HELPMSGROW"] + row["VSHIFT"])
+        # The VGA text console has 25 rows. menumain.c adds VSHIFT to the
+        # command line, tab message, timeout and help start rows, not to the
+        # help end; the entries end on VSHIFT + 3 + ROWS, the box's border
+        # under them, and nothing may land on them.
+        for cfgs in (("archiso_head.cfg", "omarchy-logo-menu.cfg"), ("archiso_head.cfg",)):
+            row = self.menu_params(*cfgs)
+            box_end = row["VSHIFT"] + 4 + row["ROWS"]
+            for key in ("CMDLINEROW", "TABMSGROW", "TIMEOUTROW", "HELPMSGROW"):
+                self.assertLessEqual(row[key] + row["VSHIFT"], 25, (cfgs, key))
+                self.assertGreater(row[key] + row["VSHIFT"], box_end, (cfgs, key))
+            self.assertLessEqual(row["HELPMSGENDROW"], 25)
+            self.assertGreaterEqual(row["HELPMSGENDROW"], row["HELPMSGROW"] + row["VSHIFT"])
 
     def test_bios_and_uefi_count_down_alike(self):
         grub_timeout = re.search(r"^timeout=(\d+)$", configured("grub.cfg", "x86_64"), re.M)

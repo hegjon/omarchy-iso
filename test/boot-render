@@ -20,10 +20,10 @@ each one:
 - no dark frames between the first logo and the greeter longer than
   --max-dark, and none after the greeter;
 - no text between the boot loader's last dark frame and the first logo; a
-  boot menu GRUB draws in the mode the kernel keeps is the boot loader's
-  screen until GRUB boots (its "Booting `...'" on the serial console), and its
-  picture is after it, until the kernel draws, while nothing lights that the
-  menu did not show.
+  boot menu in the mode the kernel keeps is the boot loader's screen until
+  it boots (GRUB's "Booting `...'" on the serial console, menu.c32's cursor
+  turned on again as it leaves), logo and all, and its picture is after it,
+  until the kernel draws, while nothing lights that the menu did not show.
 
 Frames go to OUT/frames as PNG, named by their time since QEMU started and
 what they showed; OUT/report.txt has the timeline and the problems. Exit 0
@@ -594,8 +594,8 @@ def analyse(frames: list[tuple[float, Frame]], logos: list[Logo], max_dark: floa
             samples: list[float] | None = None, booted: float | None = None) -> tuple[list, list[str], dict]:
     """Classify each frame and judge the boot: (rows, problems, summary).
     samples: the time of every screen sample, changed or not (samples.txt).
-    booted: when the boot loader booted the kernel, as its serial console
-    told (boot-menu.txt), where it shows a menu."""
+    booted: when the boot loader left its menu, as its serial console told
+    (boot-menu.txt): frames before then are the menu's, logo or not."""
     rows = [(t, frame, classify(frame, logos)) for t, frame in frames]
     problems: list[str] = []
 
@@ -616,8 +616,10 @@ def analyse(frames: list[tuple[float, Frame]], logos: list[Logo], max_dark: floa
         return span <= 0.1 or (bool(seen) and seen[i] == 1 and span <= 0.25)
 
     logo_kinds = ("logo", "greeter")
-    first = next((i for i, (_, _, v) in enumerate(rows) if v.kind in logo_kinds), None)
-    greeter = next((i for i, (_, _, v) in enumerate(rows) if v.kind == "greeter"), None)
+    if booted is not None:
+        booted = menu_left(rows, booted)
+    first = next((i for i, (t, _, v) in enumerate(rows) if v.kind in logo_kinds and (booted is None or t >= booted)), None)
+    greeter = next((i for i, (t, _, v) in enumerate(rows) if v.kind == "greeter" and (booted is None or t >= booted)), None)
     summary = {"first logo": rows[first][0] if first is not None else None,
                "greeter": rows[greeter][0] if greeter is not None else None}
     if samples and len(samples) > 1 and max(samples) > min(samples):
@@ -799,6 +801,27 @@ def analyse(frames: list[tuple[float, Frame]], logos: list[Logo], max_dark: floa
     return rows, problems, summary
 
 
+def still_menu(frame: Frame, menu: Frame) -> bool:
+    """frame is the menu's last frame, but for a cursor: the boot loader has
+    left its menu and nothing has drawn over it yet."""
+    if (frame.width, frame.height) != (menu.width, menu.height) or lit_only(menu, frame) is not None:
+        return False
+    box = lit_only(frame, menu)
+    return box is None or (box[2] - box[0] < 16 and box[3] - box[1] < 4)
+
+
+def menu_left(rows, booted: float) -> float:
+    """When the menu left the screen: the first frame after the boot loader
+    said it left its menu that is not still the menu (still_menu)."""
+    menu = max((j for j in range(len(rows)) if rows[j][0] < booted), default=None)
+    if menu is None:
+        return booted
+    j = menu + 1
+    while j < len(rows) and still_menu(rows[j][1], rows[menu][1]):
+        j += 1
+    return rows[j][0] if j < len(rows) else booted
+
+
 def old_video_memory(frame: Frame, box: tuple[int, int, int, int]) -> bool:
     """The screen lit all over, as a video mode shows the memory another mode
     left: nine tenths of the frame each way, a fifth of it lit at least
@@ -949,17 +972,27 @@ def run_qemu(args, out: Path, logos: list[Logo]) -> list[tuple[float, Path]]:
         while time.time() - t0 < args.timeout:
             if qemu.poll() is not None:
                 raise SystemExit(f"QEMU exited: {(out / 'qemu.log').read_text()[-400:]}")
-            # GRUB's last words on the serial console as it boots a menu entry;
-            # the file's time is theirs, closer than this loop's 0.2 s.
-            if booted is None and (out / "serial.log").exists() and b"Booting `" in (out / "serial.log").read_bytes():
+            # The boot loader leaving its menu on the serial console: GRUB's
+            # "Booting `...'", menu.c32 turning the cursor on again (ESC [?25h).
+            # The file's time is theirs, closer than this loop's 0.2 s.
+            if booted is None and (out / "serial.log").exists() \
+                    and any(mark in (out / "serial.log").read_bytes() for mark in (b"Booting `", b"\x1b[?25h")):
                 booted = (out / "serial.log").stat().st_mtime - t0
                 (out / "boot-menu.txt").write_text(f"{booted:.3f}\n")
             for path in sorted(raw.glob("0*.ppm")):
                 if path.name in seen:
                     continue
                 seen.add(path.name)
-                if greeter_at is None and classify(read_ppm(path.read_bytes()), logos).kind == "greeter":
-                    greeter_at = time.time()
+                # A menu that shows the logo with its entries under it can look
+                # like the greeter: only a frame after the boot loader left its
+                # menu counts.
+                if greeter_at is None and booted is not None and float(path.stem) >= booted:
+                    frame = read_ppm(path.read_bytes())
+                    menu = max((p for p in raw.glob("0*.ppm") if float(p.stem) < booted), default=None,
+                               key=lambda p: float(p.stem))
+                    if (menu is None or not still_menu(frame, read_ppm(menu.read_bytes()))) \
+                            and classify(frame, logos).kind == "greeter":
+                        greeter_at = time.time()
             if greeter_at is not None and time.time() - greeter_at > args.after_greeter:
                 break
             time.sleep(0.2)
