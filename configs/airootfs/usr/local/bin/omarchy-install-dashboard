@@ -876,11 +876,13 @@ reboot_now() {
   # so skip the stop jobs that would page it back in. Not released: the
   # finish screen told the user to leave the medium in, which keeps the
   # graceful path's cold reads safe, and systemd gets its own chance at the
-  # unmount the release could not do.
+  # unmount the release could not do. --no-wall: logind's "The system will
+  # reboot now!" would land on this screen (omarchy-shutdown-notice says
+  # Rebooting... instead).
   if [[ $TARGET_RELEASED == yes ]]; then
     systemctl reboot -ff 2>/dev/null || reboot -f 2>/dev/null || true
   else
-    systemctl reboot 2>/dev/null || reboot 2>/dev/null || true
+    systemctl reboot --no-wall 2>/dev/null || reboot --no-wall 2>/dev/null || true
   fi
 }
 
@@ -1106,10 +1108,10 @@ failure_menu() {
         render_failure "${failure_status:-1}" "${failure_summary:-}" "${failure_media_diagnosis:-}" >"$TTY_PATH" 2>/dev/null || true
         ;;
       reboot)
-        reboot 2>/dev/null || systemctl reboot 2>/dev/null || true
+        reboot --no-wall 2>/dev/null || systemctl reboot --no-wall 2>/dev/null || true
         ;;
       poweroff)
-        poweroff 2>/dev/null || systemctl poweroff 2>/dev/null || true
+        poweroff --no-wall 2>/dev/null || systemctl poweroff --no-wall 2>/dev/null || true
         ;;
       shell | "")
         return 0
@@ -1219,7 +1221,7 @@ fi
 if [[ ${OMARCHY_UI_DEFER_PROVISIONING:-} == "yes" ]]; then
   printf '%s' "$CLEAR" >"$TTY_PATH" 2>/dev/null || true
   [[ ${OMARCHY_UI_AUTO_REBOOT:-} == "no" ]] && exit 0
-  reboot 2>/dev/null || systemctl reboot 2>/dev/null || true
+  reboot --no-wall 2>/dev/null || systemctl reboot --no-wall 2>/dev/null || true
   exit 0
 fi
 

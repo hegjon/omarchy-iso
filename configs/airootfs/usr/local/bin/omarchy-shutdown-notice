@@ -8,10 +8,14 @@
 #
 # Where the greeter is still up (the configurator leaves its tagline and hint
 # rows in /run/omarchy-iso/greeter-rows until a Return), the notice takes the
-# tagline's place under the logo and the hint goes; elsewhere it is alone,
-# centred on a cleared screen. The cursor then waits on an empty row: systemd
-# clears its status line on the console (a carriage return and an erase to the
-# end of the line) wherever the cursor is, which took the notice away again.
+# tagline's place and everything under the logo goes: the hint, and the wall
+# message logind writes on every login's tty when systemctl asks for the
+# reboot or poweroff ("Broadcast message from root@archiso ... The system will
+# power off now!", from the blank row under the logo on). Elsewhere the notice
+# is alone, centred on a cleared screen. The cursor then waits on an empty
+# row: systemd clears its status line on the console (a carriage return and an
+# erase to the end of the line) wherever the cursor is, which took the notice
+# away again.
 # The kernel's messages go to tty12 (hooks/omarchy-logo), not here.
 
 set -u
@@ -32,8 +36,8 @@ col=$(((cols - ${#text}) / 2 + 1))
 
 if read -r tagline_row hint_row 2>/dev/null <"$run/greeter-rows" &&
   [[ $tagline_row =~ ^[0-9]+$ && $hint_row =~ ^[0-9]+$ ]]; then
-  printf '\033[?25l\033[0m\033[%d;1H\033[2K\033[%d;1H\033[2K\033[%d;%dH%s\033[%d;1H' \
-    "$tagline_row" "$hint_row" "$tagline_row" "$col" "$text" "$hint_row" >"$tty" 2>/dev/null
+  printf '\033[?25l\033[0m\033[%d;1H\033[J\033[%d;%dH%s\033[%d;1H' \
+    "$((tagline_row - 1))" "$tagline_row" "$col" "$text" "$hint_row" >"$tty" 2>/dev/null
 else
   printf '\033[?25l\033[0m\033[H\033[2J\033[%d;%dH%s\033[%d;1H' \
     "$((rows / 2))" "$col" "$text" "$((rows / 2 + 2))" >"$tty" 2>/dev/null

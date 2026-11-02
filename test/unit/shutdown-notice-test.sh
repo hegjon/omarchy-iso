@@ -3,11 +3,12 @@
 #
 # omarchy-shutdown-notice (getty@tty1's ExecStopPost): on a shutdown it writes
 # "Rebooting..." or "Powering off..." on tty1, in the greeter's tagline row
-# while the greeter is up and alone on a cleared screen otherwise, and leaves
-# the cursor off that row; when getty stops for anything else it writes
-# nothing. Runs it against a file in place of tty1, with systemctl and stty
-# stubbed. Nor does .automated_script.sh report the configurator's death by
-# the shutdown's SIGTERM there: its on_tty, run the same way.
+# with all else under the logo cleared while the greeter is up, alone on a
+# cleared screen otherwise, and leaves the cursor off that row; when getty
+# stops for anything else it writes nothing. Runs it against a file in place
+# of tty1, with systemctl and stty stubbed. Nor does .automated_script.sh
+# report the configurator's death by the shutdown's SIGTERM there: its on_tty,
+# run the same way.
 
 set -euo pipefail
 
@@ -41,8 +42,8 @@ echo "30 32" >"$work/run/greeter-rows"
 out=$(notice running "")
 [[ -z $out ]] && ok "getty stopping outside a shutdown: nothing written" || fail "wrote outside a shutdown: $out"
 out=$(notice stopping "1 reboot.target start waiting")
-[[ $out == *'[30;1H^[[2K^[[32;1H^[[2K^[[30;75HRebooting...^[[32;1H' ]] &&
-  ok "a reboot at the greeter: Rebooting... in the tagline's row, centred, the cursor on the hint's row" ||
+[[ $out == *'[29;1H^[[J^[[30;75HRebooting...^[[32;1H' ]] &&
+  ok "a reboot at the greeter: all under the logo cleared, Rebooting... in the tagline's row, centred, the cursor on the hint's row" ||
   fail "reboot at the greeter: $out"
 out=$(notice stopping "2 poweroff.target start waiting")
 [[ $out == *'Powering off...'* ]] && ok "a poweroff: Powering off..." || fail "poweroff: $out"
