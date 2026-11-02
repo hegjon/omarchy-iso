@@ -80,10 +80,16 @@ guest() {
     -o UserKnownHostsFile=/dev/null -o ConnectTimeout=3 -o LogLevel=ERROR root@127.0.0.1 "$@"
 }
 # Regular files of the live root with pages in the page cache: what the boot
-# has read, before the overlay (fincore sees nothing through it).
-resident='find /run/archiso/airootfs -xdev -type f -print0 2>/dev/null |
-  xargs -0 fincore -b --noheadings --raw --output RES,FILE 2>/dev/null |
-  awk "\$1 > 0 { sub(/^[0-9]+ \/run\/archiso\/airootfs\//, \"\"); print }"'
+# has read, before the overlay (fincore sees nothing through it). The live
+# system is a layer over the root image (builder/dedup-airootfs.sh), so both
+# layers: what the boot reads out of the image lands in the list too, and the
+# dedup keeps those files in the live layer, where this order applies.
+resident='for layer in /run/archiso/airootfs /run/omarchy-root/image; do
+    [ -d "$layer" ] || continue
+    find "$layer" -xdev -type f -print0 2>/dev/null |
+      xargs -0 fincore -b --noheadings --raw --output RES,FILE 2>/dev/null |
+      awk -v layer="$layer/" "\$1 > 0 { sub(/^[0-9]+ /, \"\"); if (index(\$0, layer) == 1) print substr(\$0, length(layer) + 1) }"
+  done'
 
 echo "Booting $(basename "$iso") in QEMU (UEFI, USB 3 stick, ssh on port $port)..."
 deadline=$((SECONDS + 300))

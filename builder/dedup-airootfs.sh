@@ -20,6 +20,13 @@
 # image has the same path with the same type, mode, owner, xattrs and bytes,
 # or the same symlink.
 #
+# Also kept: the files the live boot reads on its way to the installer's
+# first screen (usr/share/omarchy-iso/boot-files.sort, bin/omarchy-iso-boot-files).
+# mksquashfs lays them out first and together in the live tree's squashfs; out
+# of the image, a btrfs image inside a squashfs, they cost the scattered reads
+# that sort file is there to avoid (on a USB 2 stick the greeter came 3 s later
+# in QEMU, 4 s on a ThinkPad X200).
+#
 # Needs root: mounts the image. The marks go in as mksquashfs pseudo
 # definitions: overlayfs refuses trusted.overlay xattrs on the build
 # container's own overlay, where the tree is.
@@ -57,6 +64,29 @@ KEEP = ("etc", "var", "root", "boot", "usr/local", "usr/lib/systemd", "usr/lib/u
         "usr/lib/tmpfiles.d", "usr/lib/sysusers.d", "usr/lib/sysctl.d", "usr/lib/modprobe.d",
         "usr/lib/modules-load.d", "usr/lib/binfmt.d", "usr/lib/environment.d", "usr/share/factory")
 
+def sorted_names(path):
+    """The paths a mksquashfs sort file names: "path priority", a space in a
+    path as "\\ " and a backslash as "\\\\"."""
+    names = set()
+    try:
+        lines = open(path, encoding="utf-8", errors="surrogateescape").read().splitlines()
+    except FileNotFoundError:
+        return names
+    for line in lines:
+        if not line or line.startswith("#"):
+            continue
+        name = line.rsplit(" ", 1)[0]
+        out, i = [], 0
+        while i < len(name):
+            if name[i] == "\\" and i + 1 < len(name):
+                out.append(name[i + 1]); i += 2
+            else:
+                out.append(name[i]); i += 1
+        names.add("".join(out))
+    return names
+
+BOOT_FILES = sorted_names(os.path.join(live, "usr/share/omarchy-iso/boot-files.sort"))
+
 def xattrs(path):
     return {k: os.getxattr(path, k, follow_symlinks=False) for k in os.listxattr(path, follow_symlinks=False)}
 
@@ -73,7 +103,7 @@ def same(a, b):
         return False
     return filecmp.cmp(a, b, shallow=False)
 
-removed = kept_bytes = removed_bytes = 0
+removed = kept_bytes = removed_bytes = boot_kept = boot_bytes = 0
 opaque = []
 for top, dirs, files in os.walk(live):
     rel = os.path.relpath(top, live)
@@ -84,6 +114,11 @@ for top, dirs, files in os.walk(live):
     for name in files:
         a, b = os.path.join(top, name), os.path.join(image, rel, name)
         size = os.lstat(a).st_size
+        if os.path.normpath(os.path.join(rel, name)) in BOOT_FILES:
+            boot_kept += 1
+            boot_bytes += size
+            kept_bytes += size
+            continue
         if same(a, b):
             os.unlink(a)
             removed += 1
@@ -97,5 +132,6 @@ with open(pseudo, "w") as f:
 with open(os.path.join(live, "etc", "omarchy-iso-live-over-image"), "w") as f:
     f.write("The live system is a layer over omarchy-root.sfs (builder/dedup-airootfs.sh).\n")
 print(f"dedup-airootfs: {removed} files ({removed_bytes / 1048576:.0f} MiB) are the image's; "
-      f"{kept_bytes / 1048576:.0f} MiB stay outside the kept directories")
+      f"{kept_bytes / 1048576:.0f} MiB stay outside the kept directories, {boot_kept} files "
+      f"({boot_bytes / 1048576:.1f} MiB) of them for the boot's read order")
 PY
