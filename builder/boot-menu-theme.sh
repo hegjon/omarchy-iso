@@ -2,9 +2,10 @@
 
 # Omarchy's GRUB menu (configs/grub/themes/omarchy/theme.txt) needs fonts,
 # pixmaps and the logo next to it. They are made at build time from the same
-# sources as the rest of the boot: the logo from the Plymouth theme in the
-# omarchy-settings package the live system installs, the fonts from
-# JetBrains Mono, so neither can drift from what boots after the menu.
+# sources as the rest of the boot: the logo from the logo.txt in the
+# omarchy-settings package the live system installs, the one the console
+# draws after the menu, the fonts from JetBrains Mono, so neither can drift
+# from what boots after the menu.
 #
 # Callers run these as `build_... || exit 1`, which turns off errexit inside
 # them, so every step checks itself.
@@ -12,11 +13,21 @@ build_grub_theme() {
   local theme_dir=$1 settings_archive=$2
   local fonts=/usr/share/fonts/TTF size weight pf2 part
 
-  if ! bsdtar -xOf "$settings_archive" usr/share/plymouth/themes/omarchy/logo.png >"$theme_dir/logo.png" ||
-    [[ ! -s $theme_dir/logo.png ]]; then
-    echo "ERROR: $settings_archive has no Plymouth logo for the boot menu" >&2
+  # The logo as the console draws it right after the menu (console-logo.sh):
+  # ten pixels a logo pixel, the boot logo's 10x20 cells, in the palette's
+  # green. theme.txt puts it where the console's cells put it.
+  local logo_txt
+  logo_txt=$(mktemp) || return 1
+  if ! bsdtar -xOf "$settings_archive" usr/share/omarchy/logo.txt >"$logo_txt" || [[ ! -s $logo_txt ]]; then
+    echo "ERROR: $settings_archive has no logo.txt for the boot menu" >&2
+    rm -f "$logo_txt"
     return 1
   fi
+  if ! python3 "$(dirname "${BASH_SOURCE[0]}")/logo-png.py" "$logo_txt" 10 '#9ece6a' "$theme_dir/logo.png"; then
+    rm -f "$logo_txt"
+    return 1
+  fi
+  rm -f "$logo_txt"
 
   # Latin, punctuation and the box and arrow glyphs GRUB's console and
   # editor draw; the full font is 30 times larger and slower to load.
@@ -43,7 +54,7 @@ build_grub_theme() {
     magick -size 1x1 xc:'#292e42' PNG32:"$theme_dir/select_$part.png" || return 1
   done
   for part in w nw sw; do
-    magick -size 4x1 xc:'#a8cd76' PNG32:"$theme_dir/select_$part.png" || return 1
+    magick -size 4x1 xc:'#9ece6a' PNG32:"$theme_dir/select_$part.png" || return 1
   done
   magick -size 1x1 xc:'#1a1b26' PNG32:"$theme_dir/scroll_frame_c.png" || return 1
   magick -size 1x1 xc:'#414868' PNG32:"$theme_dir/scroll_thumb_c.png" || return 1

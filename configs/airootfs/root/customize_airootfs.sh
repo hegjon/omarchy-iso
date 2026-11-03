@@ -124,10 +124,11 @@ else
   echo "Boot file layout: $((listed - missing)) of $listed listed files present."
 fi
 
-# The live console font (Terminus plus the half blocks the logo needs), built
-# here so the installer loads it with setfont alone instead of starting Python
-# on the medium first (i18n_console_font in /usr/share/omarchy-iso/i18n.sh).
-for size in 16 32; do
+# The live console fonts (Terminus plus the half blocks the logo needs), built
+# here so the installer loads them with setfont alone instead of starting
+# Python on the medium first (i18n_console_font in /usr/share/omarchy-iso/i18n.sh):
+# 20 px for the boot logo and the greeter, 16 and 32 px for the installer.
+for size in 16 20 32; do
   python3 /usr/share/omarchy-iso/console-font.py \
     "/usr/share/kbd/consolefonts/ter-v${size}b.psf.gz" "/usr/share/omarchy-iso/console-$size.psf" ||
     echo "WARNING: console-$size.psf not built; the live installer will generate it at boot" >&2

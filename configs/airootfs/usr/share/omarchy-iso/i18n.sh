@@ -34,23 +34,25 @@ i18n_translated() {
 }
 
 # The kernel's console fonts carry only the IBM PC character set, so a Linux VT
-# gets Terminus, patched for the logo. On a framebuffer, at the size the boot
-# logo was laid out in (omarchy_console_font_size, console-logo.sh), so the
-# greeter draws over the logo in place; on the VGA text console, at the size
-# the kernel picked. Nothing here may fail the caller, which can be running
-# under set -euo pipefail.
+# gets Terminus, patched for the logo. On a framebuffer, for the greeter
+# (i18n_console_font TTY logo) at the size the boot logo was laid out in
+# (omarchy_console_logo_font_size, console-logo.sh), so it draws over the logo
+# in place, and for the installer's screens by omarchy_console_font_size; on
+# the VGA text console, at the size the kernel picked. Nothing here may fail
+# the caller, which can be running under set -euo pipefail.
 i18n_console_font() {
-  local tty=$1 height size=16 font=${OMARCHY_ISO_CONSOLE_FONT:-}
+  local tty=$1 height size=16 font=${OMARCHY_ISO_CONSOLE_FONT:-} rule=omarchy_console_font_size
   [[ $tty == /dev/tty[0-9]* ]] || return 0
+  [[ ${2:-} == logo ]] && rule=omarchy_console_logo_font_size
 
-  if [[ -e ${OMARCHY_FB:-/sys/class/graphics/fb0} ]] && declare -F omarchy_console_font_size >/dev/null; then
-    size=$(omarchy_console_font_size) || size=16
+  if [[ -e ${OMARCHY_FB:-/sys/class/graphics/fb0} ]] && declare -F "$rule" >/dev/null; then
+    size=$("$rule") || size=16
   else
     height=$(showconsolefont -i -C "$tty" 2>/dev/null | sed -n 's/^[0-9]*x\([0-9]*\)x[0-9]*$/\1/p') || height=16
     (( ${height:-16} >= 32 )) && size=32
   fi
   if [[ -z $font ]]; then
-    # customize_airootfs.sh builds both sizes into the image: starting Python
+    # customize_airootfs.sh builds every size into the image: starting Python
     # for console-font.py on the live medium cost 0.6 s on the usb2 boot
     # benchmark, with the verify units sharing the stick fairly. An image
     # without them generates the font once, into /run.

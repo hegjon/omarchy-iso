@@ -18,11 +18,13 @@ build() {
     else
         warning "%s is missing: the live boot shows no logo before the greeter" "$dir/fitted.txt"
     fi
-    # The greeter's fonts: Terminus plus the half blocks the logo needs
+    # The boot logo's fonts: Terminus plus the half blocks the logo needs
     # (console-font.py; customize_airootfs.sh builds the same for the live
-    # root later). PSF2 uncompressed, which busybox's setfont reads. The 16 px
-    # one for where the kernel picked its 16x32 and the greeter has 8x16.
-    for size in 32 16; do
+    # root later). PSF2 uncompressed, which busybox's setfont reads. The 20 px
+    # one wherever the logo fits its 10-pixel columns, the 16 px one below
+    # that, where the kernel can have picked its 16x32 or 8x8
+    # (omarchy_console_logo_font_size, console-logo.sh).
+    for size in 20 16; do
         tmp=$(mktemp)
         if python3 "$share/console-font.py" "/usr/share/kbd/consolefonts/ter-v${size}b.psf.gz" "$tmp" >/dev/null 2>&1; then
             add_file "$tmp" "$share/console-$size.psf" 644

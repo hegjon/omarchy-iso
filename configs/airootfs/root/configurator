@@ -243,7 +243,7 @@ greeter_vga() {
     if [[ -e ${OMARCHY_FB:-/sys/class/graphics/fb0} ]]; then
       printf '\033[0m\033[H\033[2J'
       wait_for_stable_terminal
-      i18n_console_font "$(tty 2>/dev/null)"
+      i18n_console_font "$(tty 2>/dev/null)" logo
       greeter
       return
     fi
@@ -1403,8 +1403,12 @@ if greeter_vga_logo; then
   i18n_console_font "$(tty 2>/dev/null)"
   rm -f "${OMARCHY_RUN_DIR:-/run/omarchy-iso}/console-logo-vga"
 else
-  i18n_console_font "$(tty 2>/dev/null)"
+  # The greeter in the boot logo's font, over the logo in place; the screens
+  # after it in the installer's (i18n_console_font), on the screen the
+  # greeter cleared.
+  i18n_console_font "$(tty 2>/dev/null)" logo
   greeter
+  i18n_console_font "$(tty 2>/dev/null)"
 fi
 
 language_form

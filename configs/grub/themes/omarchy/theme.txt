@@ -1,7 +1,7 @@
-# Omarchy's boot menu, in Tokyo Night: Plymouth's background (#1a1b26) and
-# its logo where Plymouth centres it, so after a pick only the menu goes
-# away. builder/boot-menu-theme.sh makes the fonts, the pixmaps and logo.png;
-# configs/grub/theme.cfg loads them.
+# Omarchy's boot menu, in Tokyo Night: the live console's background (#1a1b26)
+# and its boot logo where its cells put it, so after a pick only the menu
+# goes away. builder/boot-menu-theme.sh makes the fonts, the pixmaps and
+# logo.png; configs/grub/theme.cfg loads them.
 #
 # GRUB paints components in the reverse of the order listed here, so what is
 # on top comes first.
@@ -22,7 +22,7 @@ terminal-border: "0"
 # before it counts rows. Both show on every screen the logo fits.
 + boot_menu {
     left = 50%-150
-    top = 50%+134
+    top = 50%+100
     width = 300
     height = 84
     item_font = "JetBrains Mono Regular 26"
@@ -42,11 +42,18 @@ terminal-border: "0"
     scrollbar_thumb = "scroll_thumb_*.png"
 }
 
-# Plymouth's layout(): the logo centred on the screen.
+# The boot logo as console-logo.sh and the greeter lay it out in 10x20 cells:
+# 81 columns centred, (cols - 81) / 2 cells in, and its 10 rows with a blank,
+# the tagline, a blank and the hint under them centred as a block,
+# (rows - 14) / 2 cells down, cols and rows the screen's whole cells. That is
+# 50%-410 and 50%-140 exactly where the screen is a multiple of 20 pixels
+# wide and of 40 high (1280x800, 1920x1080, 2560x1600, 3840x2160 and most
+# others), a few pixels off elsewhere (1366x768: 3 right, 4 down). logo.png
+# is those cells, 810x200 (logo-png.py).
 + image {
-    left = 50%-400
-    top = 50%-94
-    width = 800
-    height = 188
+    left = 50%-410
+    top = 50%-140
+    width = 810
+    height = 200
     file = "logo.png"
 }
