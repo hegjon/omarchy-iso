@@ -590,5 +590,37 @@ class RegisterLimineEfiEntryTest(unittest.TestCase):
         self.assertIn("cannot be read", str(caught.exception))
 
 
+class MbrBootEntries(unittest.TestCase):
+    """On an MBR disk (one that keeps an Amlogic bootloader) efibootmgr names
+    the ESP by disk signature and partition number, and lsblk's PARTUUID is
+    <signature>-<number>: the two have to be recognised as the same ESP, or a
+    reinstall duplicates the entry and validate_boot warns that the firmware
+    dropped it."""
+
+    ENTRY = "Limine\tHD(1,MBR,0x6d696e78,0x800,0x400000)/\\EFI\\limine\\limine_x64.efi"
+
+    def test_the_mbr_device_path_reads_as_its_partuuid(self):
+        self.assertEqual(phases_impl._entry_partition_guid(self.ENTRY), "6d696e78-01")
+        self.assertEqual(
+            phases_impl._entry_partition_guid("Limine\tHD(12,MBR,0x12ab,0x800,0x400000)/\\EFI\\x.efi"),
+            "000012ab-0c",
+        )
+        self.assertEqual(phases_impl._entry_partition_guid(f"Limine\tHD(1,GPT,{OURS},0x800,0x100000)/x"), OURS)
+        self.assertEqual(phases_impl._entry_partition_guid("Limine\tPciRoot(0x0)/x"), "")
+
+    def test_the_entry_is_this_esps(self):
+        self.assertTrue(phases_impl._is_limine_entry_for(self.ENTRY, "6d696e78-01", LOADER))
+        self.assertFalse(phases_impl._is_limine_entry_for(self.ENTRY, "6d696e78-02", LOADER))
+        self.assertFalse(phases_impl._is_limine_entry_for(self.ENTRY, "0d696e78-01", LOADER))
+        # An MBR PARTUUID is never taken for the start of a GPT GUID.
+        gpt = f"Limine\tHD(1,GPT,6d696e78-01ab-4125-bd27-696adc846a21,0x800,0x100000)/\\EFI\\limine\\limine_x64.efi"
+        self.assertFalse(phases_impl._is_limine_entry_for(gpt, "6d696e78-01", LOADER))
+
+    def test_an_entry_for_a_replaced_mbr_partition_is_stale(self):
+        stale = self.ENTRY.replace("HD(1,", "HD(2,")
+        self.assertTrue(phases_impl._is_stale_limine_entry(stale, {"6d696e78-02"}, "6d696e78-01"))
+        self.assertFalse(phases_impl._is_stale_limine_entry(self.ENTRY, {"6d696e78-01"}, "6d696e78-01"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -249,7 +249,7 @@ jobs:
         # once, as the variant changes nothing it does before it stops.
         include:
           - variant: default
-            except: &elsewhere used-disk full-nvram live-lowmem pxe slow-medium corrupt-image luks-calibration live-fontconfig
+            except: &elsewhere used-disk full-nvram live-lowmem pxe slow-medium corrupt-image luks-calibration live-fontconfig amlogic-mbr
           - variant: encrypted
             except: *elsewhere
             env: OMARCHY_INTEGRATION_ENCRYPT=true
@@ -277,6 +277,15 @@ jobs:
           - variant: live-misc
             scenarios: luks-calibration live-fontconfig
             live: true
+          # A disk whose start holds an Amlogic TV box's bootloader (a
+          # synthetic one): the install has to partition it with an MBR and
+          # leave the bootloader's bytes as they are. It installs on a disk of
+          # its own, so it needs no shared install; encrypted, the harder
+          # case, as it has to boot and unlock from the MBR's ESP.
+          - variant: amlogic-mbr-encrypted
+            scenarios: amlogic-mbr
+            live: true
+            env: OMARCHY_INTEGRATION_ENCRYPT=true
           # One keyboard variant, the harder case: encrypted, and de, not uk:
           # its y and z are swapped, so the passphrase omarchy only unlocks at
           # boot if the LUKS prompt has the install's layout. keymap-locale

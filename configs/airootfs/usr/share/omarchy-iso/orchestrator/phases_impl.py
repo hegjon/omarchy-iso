@@ -53,6 +53,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 
+from . import amlogic_boot
 from . import archinstall_adapter as arch
 from .command import capture, capture_identifier, require_text
 from .context import InstallContext, hw_platform, iso_kernel
@@ -313,9 +314,13 @@ def prepare_live(ctx: InstallContext) -> None:
     else:
         disk = _install_disk(ctx)
         if disk:
+            cleanup = ["omarchy-iso-cleanup-disk", disk]
+            boot_area = _keep_amlogic_bootloader(ctx, disk)
+            if boot_area is not None:
+                cleanup[1:1] = ["--keep-head", str(boot_area.reserve)]
             info(f"› cleaning up holders on install disk: {disk}")
             with _time_step("LIVE.cleanup_disk"):
-                result = capture(["omarchy-iso-cleanup-disk", disk])
+                result = capture(cleanup)
             for line in (result.stdout + result.stderr).splitlines():
                 info(f"  {line}")
             if result.returncode != 0:
@@ -339,6 +344,33 @@ def _install_disk(ctx: InstallContext) -> str | None:
         if mod.get("wipe"):
             return mod.get("device")
     return None
+
+
+def _keep_amlogic_bootloader(ctx: InstallContext, disk: str) -> amlogic_boot.BootArea | None:
+    """Look for an Amlogic bootloader at the start of the disk about to be
+    wiped (amlogic_boot), before anything writes to it. When there is one,
+    the layout moves behind it if it has to, the disk gets an MBR
+    (archinstall_adapter._keep_disk_head), and nothing below its first
+    partition is written but the MBR's own bytes. Reading is O_RDONLY."""
+    boot_area = amlogic_boot.detect(disk)
+    if boot_area is None:
+        return None
+    if not arch.has_uefi():
+        # Limine's BIOS install writes its boot code to bytes 0-439 and its
+        # stage 2 behind the MBR. No Amlogic machine boots that way.
+        raise RuntimeError(
+            f"{disk} carries an Amlogic bootloader, which a BIOS install would overwrite; "
+            "boot the installer with UEFI (U-Boot's) to install on it"
+        )
+    info(f"› {boot_area.describe()}")
+    shift = amlogic_boot.fit_layout(ctx.user_configuration.get("disk_config") or {}, disk, boot_area.reserve)
+    if shift:
+        arch_configuration = json.loads(ctx.arch_config_path.read_text())
+        amlogic_boot.fit_layout(arch_configuration.get("disk_config") or {}, disk, boot_area.reserve)
+        ctx.arch_config_path.write_text(json.dumps(arch_configuration, indent=2) + "\n")
+        info(f"  the partitions move {shift} bytes up, behind the bootloader")
+    ctx.state["amlogic_boot_area"] = boot_area
+    return boot_area
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -679,6 +711,7 @@ def arch_install_system(ctx: InstallContext) -> None:
         ctx.state["replaced_partition_guids"] = replaced_guids
 
         info("› partitioning + formatting + encrypting")
+        boot_area = (getattr(ctx, "state", None) or {}).get("amlogic_boot_area")
         with _time_step("STEP.perform_filesystem_operations"):
             # The btrfs archinstall makes here is overwritten by the root
             # image a moment later, so it need not TRIM the device first.
@@ -686,9 +719,12 @@ def arch_install_system(ctx: InstallContext) -> None:
                 arch.perform_filesystem_operations(
                     config,
                     throwaway_root_fs=True,
+                    **({"boot_area": boot_area} if boot_area is not None else {}),
                 )
             if deferred_keyslots:
                 ctx.state["luks_deferred_keyslots"] = deferred_keyslots
+        if boot_area is not None:
+            info(f"› {amlogic_boot.verify_kept(boot_area)}")
 
     info("› opening installer context")
     with arch.open_installer(config, ctx.target, silent=True) as installer:
@@ -2666,7 +2702,13 @@ def _write_limine_defaults_from_config(ctx: InstallContext, installer, config) -
         raise RuntimeError(f"Could not detect root at mountpoint {ctx.target}")
 
     from .luks_tuning import with_cmdline_options
-    cmdline = with_cmdline_options(" ".join(installer._get_kernel_params(root)))
+    # archinstall names the root (or its LUKS container) by PARTUUID. On an
+    # MBR that is the disk signature in bytes 440-443 plus the partition
+    # number, and the usual way to put an Amlogic bootloader back on its
+    # disk (dd bs=1 count=442 or 444 of the image) rewrites part of it: the
+    # filesystem's UUID survives that.
+    partuuid = (getattr(ctx, "state", None) or {}).get("amlogic_boot_area") is None
+    cmdline = with_cmdline_options(" ".join(arch.kernel_params(installer, root, partuuid=partuuid)))
     _write_limine_defaults(ctx, cmdline, esp_mount=_installer_esp_mount(installer))
 
 
@@ -3182,26 +3224,35 @@ def _find_label_entries(entries: dict[str, str], needle: str) -> list[str]:
 def _is_limine_entry_for(entry: str, guid: str, loader: str, label_name: str = "Limine") -> bool:
     """Whether a `efibootmgr --verbose` entry is the one
     _register_limine_efi_entry creates: labelled "Limine", starting `loader`
-    from the partition with GPT GUID `guid`. The listing reads
+    from the partition with PARTUUID `guid`. The listing reads
     "Limine<TAB>HD(part,GPT,<guid>,...)/\\EFI\\...", or ".../File(\\EFI\\...)"
-    with an older efivar; FAT is case-insensitive, and so is this. The loader's
+    with an older efivar, and HD(part,MBR,0x<disk signature>,...) on an MBR
+    disk (_entry_partition_guid); FAT is case-insensitive, and so is this. The loader's
     name has to end where `loader` ends: \\EFI\\limine\\limine_x64.efi.bak is
     another boot option, not this one."""
     label, _, path = entry.lower().partition("\t")
     loader = re.escape(loader.lower())
+    named = _entry_partition_guid(entry)
     return (
         label.strip() == label_name.lower()
-        and bool(guid) and guid in path
+        and bool(guid) and (named == guid if named else guid in path)
         and re.search(rf"(\)/{loader}|file\({loader}\))(?![\w.-])", path) is not None
     )
 
 
 def _entry_partition_guid(entry: str) -> str:
-    """The GPT partition GUID named by a `efibootmgr --verbose` entry, lower
-    case, or "" if the entry has no GPT HD(...) device path."""
+    """The partition a `efibootmgr --verbose` entry names, as lsblk's PARTUUID
+    names it, lower case: a GPT partition's GUID, or for an MBR partition
+    (HD(<n>,MBR,0x<disk signature>,...)) <signature>-<n>, both in hex, as
+    blkid makes it. "" if the entry has no HD(...) device path."""
     _, _, path = entry.lower().partition("\t")
     match = re.search(r"hd\(\d+,gpt,([0-9a-f-]+),", path)
-    return match.group(1) if match else ""
+    if match:
+        return match.group(1)
+    match = re.search(r"hd\((\d+),mbr,0x([0-9a-f]+),", path)
+    if match:
+        return f"{int(match.group(2), 16):08x}-{int(match.group(1)):02x}"
+    return ""
 
 
 def _disk_partition_guids(disk: Path) -> set[str]:

@@ -64,7 +64,7 @@ from archinstall.lib.models.device import DiskLayoutType, EncryptionType
 from archinstall.lib.pacman.config import PacmanConfig
 from archinstall.lib.models.users import User
 
-from . import disk_udev
+from . import amlogic_boot, disk_udev
 from .command import capture
 from .ui import info
 
@@ -341,6 +341,150 @@ def _filesystem_step_tweaks(throwaway_root_fs: bool) -> Iterator[None]:
             info(f"[step] FS.udevadm settle ({settle['calls']} calls: {per_call}): {settle['seconds']:.6f}s")
 
 
+def _partition_start_bytes(path) -> int | None:
+    """Where a partition starts on its disk, from sysfs (512-byte units)."""
+    name = Path(os.path.realpath(str(path))).name
+    try:
+        return int((Path(_SYS_BLOCK) / name / "start").read_text()) * 512
+    except (OSError, ValueError):
+        return None
+
+
+def _mbr_type(partition, parted) -> int:
+    if partition.getFlag(parted.PARTITION_ESP):
+        return amlogic_boot.TYPE_ESP
+    if partition.getFlag(parted.PARTITION_SWAP):
+        return amlogic_boot.TYPE_SWAP
+    return amlogic_boot.TYPE_LINUX
+
+
+def _commit_keeping_head(disk, boot_area, parted) -> bool:
+    """parted's Disk.commit for the disk with the Amlogic bootloader. A
+    commit of a new label clears sectors 0-18 (ped_disk_clobber), and the
+    msdos label writes its own boot code over bytes 0-439 when byte 0 is 0;
+    both are the bootloader's. So the partitions parted laid out are written
+    as MBR entries here, into bytes 440-511 only, and parted then tells the
+    kernel about them the way its commit does (BLKPG, commitToOS), with the
+    disk still open, so udevd's re-read comes after, as it does for parted."""
+    sector_size = disk.device.sectorSize
+    if getattr(disk, "type", "msdos") != "msdos":
+        raise RuntimeError(f"{disk.device.path} keeps an Amlogic bootloader, so it gets an MBR, not {disk.type}")
+    entries = []
+    for partition in disk.partitions:
+        if partition.type != parted.PARTITION_NORMAL:
+            raise RuntimeError(
+                f"{disk.device.path} keeps an Amlogic bootloader and gets primary partitions only"
+            )
+        start, sectors = partition.geometry.start, partition.geometry.length
+        if start * sector_size < boot_area.reserve:
+            raise RuntimeError(
+                f"partition {partition.number} on {disk.device.path} would start at byte "
+                f"{start * sector_size}, inside the Amlogic bootloader's {boot_area.reserve} bytes"
+            )
+        entries.append(amlogic_boot.MbrEntry(
+            partition.number, bool(partition.getFlag(parted.PARTITION_BOOT)),
+            _mbr_type(partition, parted), start, sectors,
+        ))
+    used_end = max((entry.start + entry.sectors for entry in entries), default=0) * sector_size
+    fd = os.open(disk.device.path, os.O_RDWR | os.O_CLOEXEC)
+    try:
+        amlogic_boot.write_mbr(fd, entries)
+        amlogic_boot.clear_tail(fd, disk.device.length * sector_size, sector_size, used_end)
+        os.fsync(fd)
+        disk.commitToOS()
+    finally:
+        os.close(fd)
+    info(
+        f"› wrote an MBR to {disk.device.path} (bytes 440-511): "
+        + ", ".join(f"{entry.slot}: start {entry.start} type {entry.type:02x}{' boot' if entry.boot else ''}"
+                    for entry in entries)
+    )
+    return True
+
+
+@contextmanager
+def _keep_disk_head(boot_area) -> Iterator[None]:
+    """Partition the disk with the Amlogic bootloader (amlogic_boot) without
+    writing to it below its first partition, other than the MBR's own bytes.
+
+    archinstall's full-disk path would write there three times: wipe_dev()
+    zeroes the disk's first KiB, partition() picks GPT on every UEFI machine
+    (DeviceHandler.partition_table), and parted's commit of the new label
+    clears sectors 0-18 and writes the GPT to sectors 1-33. For this one disk
+    partition() gets an MBR, wipe_dev() wipes only the old partitions that
+    lie behind the bootloader, and the commit writes the MBR entries alone.
+    Every other disk goes the way it always does.
+
+    Patched before _filesystem_step_tweaks, so its commit wrapper (settle,
+    then wait for the partition nodes) runs around this commit as well."""
+    if boot_area is None:
+        yield
+        return
+    import parted
+    import archinstall.lib.disk.device_handler as dh_module
+    from archinstall.lib.disk.luks import Luks2
+    from archinstall.lib.models.device import PartitionTable
+
+    handler = dh_module.device_handler
+    disk_path = os.path.realpath(boot_area.disk)
+    if not _method_accepts(handler.partition, "partition_table"):
+        raise RuntimeError("this archinstall's partition() takes no partition table; cannot keep the Amlogic bootloader")
+
+    def ours(path) -> bool:
+        return bool(path) and os.path.realpath(str(path)) == disk_path
+
+    original_partition = handler.partition
+    original_wipe_dev = handler.wipe_dev
+    commit_original = parted.Disk.__dict__["commit"]
+    shadowed = {name: vars(handler)[name] for name in ("partition", "wipe_dev") if name in vars(handler)}
+
+    def partition(modification, partition_table=None, *args, **kwargs):
+        if ours(modification.device.device_info.path):
+            partition_table = PartitionTable.MBR
+        return original_partition(modification, partition_table, *args, **kwargs)
+
+    def wipe_dev(block_device, *args, **kwargs):
+        if not ours(block_device.device_info.path):
+            return original_wipe_dev(block_device, *args, **kwargs)
+        info(f"› wiping the old partitions on {disk_path}, not its first KiB: that is the Amlogic bootloader's")
+        for part in block_device.partition_infos:
+            start = _partition_start_bytes(part.path)
+            if start is None or start < boot_area.reserve:
+                info(f"  {part.path} starts inside the bootloader's {boot_area.reserve} bytes (or nowhere known); not wiped")
+                continue
+            luks = Luks2(part.path)
+            if luks.is_luks():
+                luks.erase()
+            handler._wipe(part.path)
+        return None
+
+    def commit(disk, *args, **kwargs):
+        if not ours(getattr(getattr(disk, "device", None), "path", None)):
+            return commit_original(disk, *args, **kwargs)
+        return _commit_keeping_head(disk, boot_area, parted)
+
+    handler.partition = partition
+    handler.wipe_dev = wipe_dev
+    parted.Disk.commit = commit
+    try:
+        yield
+    finally:
+        parted.Disk.commit = commit_original
+        for name in ("partition", "wipe_dev"):
+            if name in shadowed:
+                setattr(handler, name, shadowed[name])
+            else:
+                vars(handler).pop(name, None)
+
+
+def kernel_params(installer, root, *, partuuid: bool = True) -> list[str]:
+    """archinstall's root and unlock parameters for `root`; partuuid=False
+    names the root (or its LUKS container) by filesystem UUID instead."""
+    if not partuuid and _method_accepts(installer._get_kernel_params, "partuuid"):
+        return installer._get_kernel_params(root, partuuid=False)
+    return installer._get_kernel_params(root)
+
+
 def _write_locale_conf_for_prebuilt(installer, locale_config) -> bool:
     """Write /etc/locale.conf when the root image already compiled this locale.
 
@@ -375,10 +519,15 @@ def _write_locale_conf_for_prebuilt(installer, locale_config) -> bool:
     return True
 
 
-def perform_filesystem_operations(arch_config: ArchConfig, throwaway_root_fs: bool = False) -> None:
+def perform_filesystem_operations(
+    arch_config: ArchConfig,
+    throwaway_root_fs: bool = False,
+    boot_area=None,
+) -> None:
     """Partition, format, encrypt. archinstall's FilesystemHandler is its own
     object (separate from Installer) so we run it before opening the
-    Installer context manager.
+    Installer context manager. boot_area (amlogic_boot.BootArea) is a disk
+    whose start holds an Amlogic bootloader: _keep_disk_head.
 
     parted's partition-table commit races udev: the disk wipe and the first
     BLKPG partition registration trigger probes that briefly hold the disk
@@ -405,7 +554,7 @@ def perform_filesystem_operations(arch_config: ArchConfig, throwaway_root_fs: bo
     )
 
     attempts = 3
-    with _filesystem_step_tweaks(throwaway_root_fs):
+    with _keep_disk_head(boot_area), _filesystem_step_tweaks(throwaway_root_fs):
         for attempt in range(1, attempts + 1):
             t0 = time.monotonic()
             udev_sync()

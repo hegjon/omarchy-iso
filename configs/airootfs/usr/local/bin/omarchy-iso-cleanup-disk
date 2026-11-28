@@ -28,6 +28,17 @@ if [[ ${1:-} == --protected ]]; then
   exit 0
 fi
 
+# --keep-head BYTES: the disk's first BYTES belong to a bootloader that has to
+# survive the install (an Amlogic TV box's, which its SoC loads from the start
+# of the eMMC: orchestrator/amlogic_boot.py). No signature is wiped from them:
+# not from the disk, nor from a partition that starts inside them.
+keep_head=0
+if [[ ${1:-} == --keep-head ]]; then
+  keep_head="${2:-}"
+  [[ $keep_head =~ ^[0-9]+$ ]] || { echo "Usage: $0 [--keep-head <bytes>] <disk>" >&2; exit 1; }
+  shift 2
+fi
+
 disk="${1:-}"
 [[ -n $disk && -b $disk ]] || { echo "Need a block device argument; got '$disk'" >&2; exit 1; }
 disk=$(realpath "$disk")
@@ -101,6 +112,31 @@ has_signatures() {
   [[ -n $(wipefs --no-act "$@" 2>/dev/null) ]]
 }
 
+# Where partition $1 (a kernel name) starts on the disk, in bytes.
+partition_start() {
+  local start
+  start=$(cat "/sys/class/block/$1/start" 2>/dev/null) || return 1
+  echo $((start * 512))
+}
+
+# Wipe the disk's own signatures, all but the partition table's. With
+# --keep-head, only those that lie behind the kept bytes, one by one.
+wipe_disk_signatures() {
+  local offset
+  if ((${keep_head:-0} == 0)); then
+    wipefs --all --force --types nogpt,PMBR,dos "$disk" >/dev/null || true
+    return
+  fi
+  while read -r offset; do
+    [[ -n $offset ]] || continue
+    if ((offset < keep_head)); then
+      echo "Keeping the signature at offset $offset on $disk: it is inside the first $keep_head bytes"
+      continue
+    fi
+    wipefs --force --offset "$offset" "$disk" >/dev/null || true
+  done < <(wipefs --no-act --noheadings --output OFFSET --types nogpt,PMBR,dos "$disk" 2>/dev/null || true)
+}
+
 # True when the disk holds anything to tear down or wipe. Skipping flock -x and
 # wipefs --all (which opens O_RDWR and triggers udev IN_CLOSE_WRITE while the
 # lock is held) avoids a ~1s udev lock-contention retry on clean disks.
@@ -119,7 +155,7 @@ disk_has_state() {
 }
 
 release_and_wipe() {
-  local part
+  local part start
   unuse "$disk"
   release_holders "$disk_name"
 
@@ -127,12 +163,19 @@ release_and_wipe() {
   # back when the table is re-read. The disk's own signatures go too (an md 0.90
   # member keeps its superblock near the end), all but the partition table.
   for part in $(partitions); do
+    if ((${keep_head:-0} > 0)); then
+      start=$(partition_start "$part") || start=0
+      if ((start < keep_head)); then
+        echo "Keeping the signatures of /dev/$part: it starts inside the first $keep_head bytes"
+        continue
+      fi
+    fi
     if has_signatures "/dev/$part"; then
       wipefs --all --force "/dev/$part" >/dev/null || true
     fi
   done
   if has_signatures --types nogpt,PMBR,dos "$disk"; then
-    wipefs --all --force --types nogpt,PMBR,dos "$disk" >/dev/null || true
+    wipe_disk_signatures
   fi
 }
 

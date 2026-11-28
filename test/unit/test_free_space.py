@@ -99,6 +99,37 @@ class FreeSpaceValidationTests(unittest.TestCase):
         ctx = make_ctx(self.tmp, self.plan)
         resolved = fs.validate_free_space_plan(ctx)
         self.assertEqual(resolved, self.fake_disk.resolve())
+        self.assertNotIn("amlogic_boot_area", ctx.state)
+
+    def amlogic_disk(self, *, byte0=0xD4):
+        """The fake disk with an Amlogic bootloader's header and a dos table
+        whose first partition starts at 1 MiB (test_amlogic_boot)."""
+        head = bytearray(b"\x5a" * MIB)
+        head[0] = byte0
+        head[16:20] = head[528:532] = b"@AML"
+        head[440:446] = b"xnim\0\0"
+        head[446:462] = bytes([0x80, 0, 0, 0, 0xEF, 0, 0, 0]) + (2048).to_bytes(4, "little") + (4194304).to_bytes(4, "little")
+        head[462:510] = bytes(48)
+        head[510:512] = b"\x55\xaa"
+        self.fake_disk.write_bytes(bytes(head))
+
+    def test_an_amlogic_disk_takes_partitions_behind_its_bootloader(self):
+        self.amlogic_disk()
+        ctx = make_ctx(self.tmp, self.plan)
+        fs.validate_free_space_plan(ctx)
+        self.assertEqual(ctx.state["amlogic_boot_area"].reserve, MIB)
+
+    def test_an_amlogic_disk_refuses_what_would_overwrite_its_bootloader(self):
+        cases = {
+            "would put a GPT over the bootloader": (dict(self.plan, needs_mklabel=True), 0xD4),
+            "inside the Amlogic bootloader": (dict(self.plan, efi_start_b=512 * 1024), 0xD4),
+            "parted would write its own boot code": (self.plan, 0),
+        }
+        for message, (plan, byte0) in cases.items():
+            with self.subTest(message):
+                self.amlogic_disk(byte0=byte0)
+                with self.assertRaisesRegex(RuntimeError, message):
+                    fs.validate_free_space_plan(make_ctx(self.tmp, plan))
 
     def test_rejects_overlapping_byte_range(self):
         # p2 ends at (4196352 + 419430400) * 512 = 216,901,505,024 (~202.005 GiB)

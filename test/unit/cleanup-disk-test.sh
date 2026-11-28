@@ -45,8 +45,15 @@ run_case() {
     eval "$(awk "/^[a-z_]+\(\) \{$/ { p=1 } p { print } /^\}$/ { p=0 }" "$script")"
 
     partitions() {
-      [[ $mode == "used" || $mode == "read-only" || $mode == "kernel-ro" ]] && echo "fake-disk1" || true
+      [[ $mode == "used" || $mode == "read-only" || $mode == "kernel-ro" || $mode == "keep-head" ]] && echo "fake-disk1" || true
+      [[ $mode != "keep-head" ]] || echo "fake-disk2"
     }
+    # keep-head: an Amlogic bootloader in the first MiB; fake-disk1 starts
+    # inside it (sector 8), fake-disk2 behind it.
+    if [[ $mode == "keep-head" ]]; then
+      keep_head=1048576
+      partition_start() { [[ $1 == fake-disk1 ]] && echo 4096 || echo 2097152; }
+    fi
     [[ $mode != "read-only" ]] || chmod 444 "$disk"
     udevadm() { echo "udevadm $*" >>"$log"; }
     findmnt() { return 1; }
@@ -66,6 +73,11 @@ run_case() {
     wipefs() {
       echo "wipefs $*" >>"$log"
       if [[ " $* " == *" --no-act "* ]]; then
+        if [[ $mode == "keep-head" ]]; then
+          # The disk: a signature inside the bootloader and one behind it.
+          [[ " $* " == *" --output OFFSET "* ]] && printf "0x200\n0x40000000\n" || echo "0x438  ext4"
+          return 0
+        fi
         [[ $mode == "used" || $mode == "sig-only" ]] && echo "0x438  ext4" || true
       fi
     }
@@ -129,6 +141,19 @@ grep -q '^flock -x ' "$work/sig-only.log" || fail "a disk with a whole-disk sign
 grep -q '^wipefs --all --force --types nogpt,PMBR,dos ' "$work/sig-only.log" || fail "a disk with a whole-disk signature wipes it" "$(cat "$work/sig-only.log")"
 grep -q '^udevadm trigger --action=change ' "$work/sig-only.log" || fail "a sig-only disk wakes postponed udev events after unlock" "$(cat "$work/sig-only.log")"
 echo "ok - whole-disk signature without partitions is detected, wiped, and nudged"
+
+# --keep-head: an Amlogic bootloader holds the disk's first MiB. Nothing is
+# wiped inside it: not the partition that starts there, not the disk's own
+# signature at 0x200, while the ones behind it go as on any other disk.
+run_case keep-head
+log="$work/keep-head.log"
+grep -q '^wipefs --all --force /dev/fake-disk2$' "$log" || fail "a partition behind the kept bytes is wiped" "$(cat "$log")"
+! grep -q '^wipefs --all --force /dev/fake-disk1$' "$log" || fail "a partition inside the kept bytes is not wiped" "$(cat "$log")"
+grep -q "^wipefs --force --offset 0x40000000 $work/fake-disk$" "$log" || fail "a disk signature behind the kept bytes is wiped" "$(cat "$log")"
+! grep -q -- '--offset 0x200' "$log" || fail "a disk signature inside the kept bytes is not wiped" "$(cat "$log")"
+! grep -q -- "^wipefs --all --force --types nogpt,PMBR,dos $work/fake-disk$" "$log" ||
+  fail "the disk is not wiped wholesale" "$(cat "$log")"
+echo "ok - --keep-head wipes nothing inside the kept bytes, and the rest as before"
 
 # settle_disk nudges a stranded udevadm settle when no lock is held on the disk,
 # and stays quiet while another process actively holds a lock on the disk.

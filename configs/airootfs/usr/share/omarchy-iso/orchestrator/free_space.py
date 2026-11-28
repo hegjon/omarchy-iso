@@ -17,7 +17,7 @@ import stat
 import subprocess
 import time
 
-from . import disk_udev
+from . import amlogic_boot, disk_udev
 from .command import capture
 from .luks_calibration import format_and_open_luks
 from .ui import info
@@ -139,6 +139,37 @@ def _require_strict_bool(plan: dict, key: str) -> bool:
     return value
 
 
+def _check_amlogic_bootloader(ctx, disk: Path, needs_mklabel: bool, efi_start: int) -> None:
+    """Refuse a free-space plan that would write over an Amlogic bootloader
+    at the start of the disk (amlogic_boot). parted adds partitions to an
+    existing MBR by rewriting sector 0 with bytes 0-445 as they were, which
+    keeps the bootloader, unless byte 0 is 0: it then writes its own boot
+    code over bytes 0-439. mklabel gpt clears sectors 0-18 and writes the GPT
+    over sectors 1-33. The partitions must also start behind the bootloader.
+    Checked from an O_RDONLY read, before anything is written; the bytes are
+    compared again after partitioning (execute_free_space_plan)."""
+    boot_area = amlogic_boot.detect(disk)
+    if boot_area is None:
+        return
+    info(f"› {boot_area.describe()}")
+    if needs_mklabel:
+        raise RuntimeError(
+            f"{disk} carries an Amlogic bootloader and no partition table; a free-space install "
+            "would put a GPT over the bootloader. Install on the whole disk instead, which keeps it"
+        )
+    if efi_start < boot_area.reserve:
+        raise RuntimeError(
+            f"free_space_plan puts the EFI partition at byte {efi_start} on {disk}, inside the "
+            f"Amlogic bootloader's first {boot_area.reserve} bytes"
+        )
+    if boot_area.head[0] == 0:
+        raise RuntimeError(
+            f"{disk} carries an Amlogic bootloader, and parted would write its own boot code over "
+            "bytes 0-439 of it. Install on the whole disk instead, which keeps it"
+        )
+    ctx.state["amlogic_boot_area"] = boot_area
+
+
 def validate_free_space_plan(ctx) -> Path:
     """Validate `omarchy_install.free_space_plan` before touching the disk.
 
@@ -180,6 +211,8 @@ def validate_free_space_plan(ctx) -> Path:
 
     if os.path.ismount(ctx.target):
         raise RuntimeError(f"free_space_plan target {ctx.target} is already mounted")
+
+    _check_amlogic_bootloader(ctx, resolved, needs_mklabel, efi_start)
 
     if not needs_mklabel:
         label, existing = _read_partition_table(str(resolved))
@@ -369,6 +402,9 @@ def execute_free_space_plan(ctx) -> None:
         root_dev = partition_path(disk, root_num)
         if not (_is_block_device(efi_dev) and _is_block_device(root_dev)):
             subprocess.run(["partprobe", disk], check=False, capture_output=True, text=True)
+        boot_area = (getattr(ctx, "state", None) or {}).get("amlogic_boot_area")
+        if boot_area is not None:
+            info(f"› {amlogic_boot.verify_kept(boot_area)}")
 
     with _time_step("FS.free_space_settle"):
         settle_disk_devices(disk)
